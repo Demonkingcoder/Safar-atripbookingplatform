@@ -6,15 +6,17 @@ import Departure from '../../src/models/Departure.js'
 import NotificationOutbox from '../../src/models/NotificationOutbox.js'
 import Trip from '../../src/models/Trip.js'
 import User from '../../src/models/User.js'
-import { enqueueUpcomingTripReminders, processNotificationOutboxBatch } from '../../src/utils/notification-outbox.js'
+import NotificationWorkerHeartbeat from '../../src/models/NotificationWorkerHeartbeat.js'
+import { enqueueUpcomingTripReminders, processNotificationOutboxBatch, renewNotificationJobLease } from '../../src/utils/notification-outbox.js'
 
 function query(value) { return { select: async () => value } }
 
 async function withOutboxFixture(run) {
-  const models = [NotificationOutbox, Booking, Departure, Trip, User]
+  const models = [NotificationOutbox, Booking, Departure, Trip, User, NotificationWorkerHeartbeat]
   const originalReadyState = mongoose.connection.readyState
   const originals = models.map((model) => ({ model, find: model.find, findById: model.findById, findOneAndUpdate: model.findOneAndUpdate, updateOne: model.updateOne }))
   mongoose.connection.readyState = 1
+  NotificationWorkerHeartbeat.updateOne = async () => ({ matchedCount: 1 })
   try {
     await run()
   } finally {
@@ -37,7 +39,7 @@ function installContentFixture({ failDelivery = false } = {}) {
     claimAvailable = false
     return job
   }
-  NotificationOutbox.updateOne = async (filter, update) => { updates.push(update.$set); return { matchedCount: 1 } }
+  NotificationOutbox.updateOne = async (filter, update) => { updates.push(Array.isArray(update) ? update[0].$set : update.$set); return { matchedCount: 1 } }
   User.findById = () => query({ email: 'traveler@example.test', fullName: 'Test Traveler' })
   Booking.findById = () => query({ trip: 't1', departure: 'd1', bookingReference: 'SAF-1', numberOfSeats: 2, totalAmount: 5000 })
   Trip.findById = () => query({ title: 'Mountain escape' })
@@ -107,6 +109,71 @@ test('concurrent worker passes cannot both claim and send the same outbox notifi
     assert.equal(first + second, 1)
     assert.equal(fixture.sent.length, 1)
     assert.equal(fixture.updates.at(-1).status, 'sent')
+  })
+})
+
+test('a long notification renews its lease so another worker cannot reclaim it', async () => {
+  await withOutboxFixture(async () => {
+    let stored = { _id: 'lease-job', status: 'pending', nextAttemptAt: new Date(0), lockedUntil: null, attempts: 0 }
+    let releaseDelivery
+    let deliveryStarted
+    const started = new Promise((resolve) => { deliveryStarted = resolve })
+    const deliveryGate = new Promise((resolve) => { releaseDelivery = resolve })
+    const sends = []
+    NotificationOutbox.findOneAndUpdate = async (_filter, update) => {
+      const now = new Date()
+      const canClaim = stored.status === 'pending'
+        || (stored.status === 'processing' && (!stored.lockedUntil || stored.lockedUntil <= now))
+      if (!canClaim) return null
+      const set = update[0].$set
+      stored = { ...stored, ...set, lockedUntil: new Date(Date.now() + set.lockedUntil.$add[1]), attempts: stored.attempts + 1 }
+      return { ...stored, user: 'u1', booking: 'b1', eventKey: 'booking:b1:booking_confirmed', type: 'booking_confirmed', lockToken: set.lockToken }
+    }
+    NotificationOutbox.updateOne = async (filter, update) => {
+      if (filter.lockToken && filter.lockToken !== stored.lockToken) return { matchedCount: 0 }
+      if (filter.$expr && !(stored.lockedUntil > new Date())) return { matchedCount: 0 }
+      const set = Array.isArray(update) ? update[0].$set : update.$set
+      stored = { ...stored, ...set }
+      if (set.lockedUntil?.$add) stored.lockedUntil = new Date(Date.now() + set.lockedUntil.$add[1])
+      return { matchedCount: 1 }
+    }
+    User.findById = () => query({ email: 'traveler@example.test', fullName: 'Test Traveler' })
+    Booking.findById = () => query({ trip: 't1', departure: 'd1', bookingReference: 'SAF-1', numberOfSeats: 1, totalAmount: 100 })
+    Trip.findById = () => query({ title: 'Trip' })
+    Departure.findById = () => query({ startDate: new Date('2027-02-01T00:00:00Z') })
+
+    const first = processNotificationOutboxBatch({
+      batchSize: 1,
+      lockMs: 120,
+      leaseRenewalIntervalMs: 20,
+      mailSender: async () => { sends.push('first'); deliveryStarted(); await deliveryGate; return { accepted: ['traveler@example.test'] } },
+    })
+    await started
+    await new Promise((resolve) => setTimeout(resolve, 160))
+    const second = await processNotificationOutboxBatch({ batchSize: 1, lockMs: 120, leaseRenewalIntervalMs: 20, mailSender: async () => { sends.push('second') } })
+    assert.equal(second, 0)
+    releaseDelivery()
+    assert.equal(await first, 1)
+    assert.deepEqual(sends, ['first'])
+    assert.equal(stored.status, 'sent')
+  })
+})
+
+test('a stale lock token cannot renew a notification lease and renewal uses database time', async () => {
+  await withOutboxFixture(async () => {
+    const original = NotificationOutbox.updateOne
+    let suppliedFilter
+    let suppliedUpdate
+    NotificationOutbox.updateOne = async (filter, update) => { suppliedFilter = filter; suppliedUpdate = update; return { matchedCount: 0 } }
+    try {
+      assert.equal(await renewNotificationJobLease('job-1', 'old-owner', 10_000), false)
+      assert.equal(suppliedFilter.status, 'processing')
+      assert.equal(suppliedFilter.lockToken, 'old-owner')
+      assert.deepEqual(suppliedFilter.$expr, { $gt: ['$lockedUntil', '$$NOW'] })
+      assert.equal(suppliedUpdate[0].$set.lockedUntil.$add[0], '$$NOW')
+    } finally {
+      NotificationOutbox.updateOne = original
+    }
   })
 })
 

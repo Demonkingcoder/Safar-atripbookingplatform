@@ -15,6 +15,10 @@ services:
         sync: false
       - key: FRONTEND_URL
         sync: false
+      - key: API_PUBLIC_URL
+        sync: false
+      - key: COOKIE_SITE_DOMAIN
+        sync: false
       - key: CORS_ORIGIN
         sync: false
       - key: ACCESS_TOKEN_SECRET
@@ -34,7 +38,7 @@ services:
       - key: JWT_AUDIENCE
         value: safar-frontend
       - key: COOKIE_SAME_SITE
-        value: none
+        value: lax
       - key: RAZORPAY_MODE
         sync: false
       - key: RAZORPAY_TEST_KEY_ID

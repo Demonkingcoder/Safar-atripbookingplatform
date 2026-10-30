@@ -24,14 +24,42 @@ const workerHealthCheck = asyncHandler(async (req, res) => {
     const deadLetterJobs = await NotificationOutbox.countDocuments({ status: "dead" });
     const maxAgeMs = 45_000;
     const fresh = Boolean(heartbeat?.lastHeartbeatAt && Date.now() - new Date(heartbeat.lastHeartbeatAt).getTime() <= maxAgeMs);
-    const healthy = fresh && heartbeat.state === "healthy" && deadLetterJobs === 0;
-    const statusCode = healthy ? 200 : 503;
+    const liveness = fresh;
+    const currentLeaseExpired = Boolean(heartbeat?.currentJobId && heartbeat?.currentLeaseUntil
+        && new Date(heartbeat.currentLeaseUntil).getTime() <= Date.now());
+    const lastJobProgressAt = heartbeat?.lastLeaseRenewalAt || heartbeat?.currentJobStartedAt;
+    const progressAgeMs = heartbeat?.currentJobId && lastJobProgressAt
+        ? Date.now() - new Date(lastJobProgressAt).getTime()
+        : 0;
+    const passAgeMs = heartbeat?.lastPassStartedAt
+        ? Date.now() - new Date(heartbeat.lastPassStartedAt).getTime()
+        : 0;
+    const stalled = (heartbeat?.currentProcessingState === "processing"
+            && (currentLeaseExpired || progressAgeMs > 90_000))
+        || (heartbeat?.currentProcessingState === "polling" && passAgeMs > 5 * 60_000);
+    const available = liveness && !stalled && heartbeat?.state === "healthy"
+        && heartbeat?.currentProcessingState !== "degraded";
+    const statusCode = available ? 200 : 503;
     res.status(statusCode).json(new ApiResponse(statusCode, {
-        worker: !fresh ? "stale_or_not_started" : heartbeat?.state || "not_started",
-        lastHeartbeatAt: heartbeat?.lastHeartbeatAt || null,
-        deadLetterJobs,
+        worker: {
+            availability: available ? "available" : "unavailable",
+            liveness: liveness ? "alive" : !fresh ? "stale" : heartbeat?.state || "not_started",
+            state: heartbeat?.state || "not_started",
+            lastHeartbeatAt: heartbeat?.lastHeartbeatAt || null,
+        },
+        processing: {
+            state: stalled ? "stalled" : heartbeat?.currentProcessingState || "idle",
+            currentJobId: heartbeat?.currentJobId || null,
+            currentJobStartedAt: heartbeat?.currentJobStartedAt || null,
+            currentLeaseUntil: heartbeat?.currentLeaseUntil || null,
+            lastLeaseRenewalAt: heartbeat?.lastLeaseRenewalAt || null,
+            lastSuccessfulClaimAt: heartbeat?.lastSuccessfulClaimAt || null,
+            lastSuccessfulCompletionAt: heartbeat?.lastSuccessfulCompletionAt || null,
+            lastPassCompletedAt: heartbeat?.lastPassCompletedAt || null,
+        },
+        queue: { deadLetterJobs, requiresAttention: deadLetterJobs > 0 },
         ...(heartbeat?.lastErrorCode ? { lastErrorCode: heartbeat.lastErrorCode } : {}),
-    }, healthy ? "Notification worker is healthy" : "Notification worker is stale, degraded, or has dead-letter jobs"));
+    }, available ? "Notification worker process is available" : "Notification worker is stale, degraded, or stalled"));
 });
 
 export { healthCheck, workerHealthCheck };

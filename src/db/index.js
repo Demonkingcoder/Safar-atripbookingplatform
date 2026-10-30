@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-import dns from "dns";
 import { detectTransactionSupport } from "../utils/transaction-support.js";
 import PaymentWebhookEvent from "../models/PaymentWebhookEvent.js";
 import NotificationOutbox from "../models/NotificationOutbox.js";
@@ -9,13 +8,6 @@ import Booking from "../models/Booking.js";
 import User from "../models/User.js";
 import RefreshSession from "../models/RefreshSession.js";
 import Trip from "../models/Trip.js";
-
-// Ensure reliable DNS resolution for mongodb+srv URLs across all ISPs
-try {
-    dns.setServers(["8.8.8.8", "1.1.1.1"]);
-} catch {
-    // DNS settings may be managed by the host environment.
-}
 
 const connectDB = async () => {
     try {

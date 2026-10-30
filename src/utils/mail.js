@@ -20,6 +20,9 @@ const transporter = nodemailer.createTransport({
     host: process.env.BREVO_SMTP_HOST,
     port: Number(process.env.BREVO_SMTP_PORT || 587),
     secure: Number(process.env.BREVO_SMTP_PORT || 587) === 465,
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 60_000,
     auth: {
         user: process.env.BREVO_SMTP_USER,
         pass: process.env.BREVO_SMTP_PASS,

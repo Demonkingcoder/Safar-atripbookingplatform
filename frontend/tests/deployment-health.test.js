@@ -38,14 +38,27 @@ test('worker probe reports the fresh Mongo heartbeat and detects dead-letter job
   mongoose.connection.readyState = 1
   await detectTransactionSupport({ db: { admin: () => ({ command: async () => ({ setName: 'rs0' }) }) } })
   let deadLetterJobs = 0
-  NotificationWorkerHeartbeat.findById = () => ({ lean: async () => ({ state: 'healthy', lastHeartbeatAt: now }) })
+  const heartbeat = { state: 'healthy', lastHeartbeatAt: now, currentProcessingState: 'idle' }
+  NotificationWorkerHeartbeat.findById = () => ({ lean: async () => heartbeat })
   NotificationOutbox.countDocuments = async () => deadLetterJobs
   try {
     assert.equal((await invoke(workerHealthCheck)).statusCode, 200)
     deadLetterJobs = 1
-    const degraded = await invoke(workerHealthCheck)
-    assert.equal(degraded.statusCode, 503)
-    assert.equal(degraded.body.data.deadLetterJobs, 1)
+    const availableWithDeadLetters = await invoke(workerHealthCheck)
+    assert.equal(availableWithDeadLetters.statusCode, 200)
+    assert.equal(availableWithDeadLetters.body.data.worker.availability, 'available')
+    assert.equal(availableWithDeadLetters.body.data.queue.deadLetterJobs, 1)
+    heartbeat.state = 'degraded'
+    const degradedButAlive = await invoke(workerHealthCheck)
+    assert.equal(degradedButAlive.body.data.worker.liveness, 'alive')
+    assert.equal(degradedButAlive.body.data.worker.availability, 'unavailable')
+    heartbeat.state = 'healthy'
+    heartbeat.currentProcessingState = 'processing'
+    heartbeat.currentJobId = 'stalled-job'
+    heartbeat.currentJobStartedAt = new Date(Date.now() - 6 * 60 * 1000)
+    const stalled = await invoke(workerHealthCheck)
+    assert.equal(stalled.statusCode, 503)
+    assert.equal(stalled.body.data.processing.state, 'stalled')
   } finally {
     mongoose.connection.readyState = originalReadyState
     NotificationWorkerHeartbeat.findById = originalFind
