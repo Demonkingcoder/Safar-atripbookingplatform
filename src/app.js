@@ -10,6 +10,7 @@ app.use(express.json({ limit: "32kb", verify: (req, res, buffer) => { req.rawBod
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 app.use(express.static("public"));
 app.use(cookieParser());
+app.set("trust proxy", 1);
 
 // Credentialed CORS uses explicit origins; a wildcard cannot be combined with cookies.
 const configuredOrigins = (process.env.CORS_ORIGIN || process.env.CORS || "")
