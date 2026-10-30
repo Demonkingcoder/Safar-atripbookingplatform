@@ -1,5 +1,7 @@
 
 import User from "../models/User.js";
+import RefreshSession from "../models/RefreshSession.js";
+import mongoose from "mongoose";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 
@@ -13,30 +15,98 @@ import {
 import { ApiError } from "../utils/api-error.js";
 import { ApiResponse } from "../utils/api-response.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+import { cookieClearOptions, cookieOptions, tokenLifetimes, verifyTokenClaims } from "../utils/token-policy.js";
 
-const cookieOptions = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-};
+const hashRefreshToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
 
-// Generate access and refresh tokens
-const generateAccessandRefreshTokens = async (userId) => {
-    const user = await User.findById(userId);
-
-    if (!user) {
-        throw new ApiError(404, "User not found");
+function verifySignedToken(token, secret, tokenType, ignoreExpiration = false) {
+    if (!secret) throw new ApiError(500, "Authentication token secret is not configured");
+    try {
+        const decoded = jwt.verify(token, secret, ignoreExpiration ? { ignoreExpiration: true } : undefined);
+        return verifyTokenClaims(decoded, tokenType);
+    } catch (error) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(401, tokenType === "refresh" ? "Invalid or expired refresh token" : "Invalid or expired access token");
     }
+}
 
-    const accessToken = user.generateAccessToken();
-    const refreshToken = user.generateRefreshToken();
+function refreshExpiry(now, absoluteExpiresAt) {
+    return new Date(Math.min(
+        now.getTime() + tokenLifetimes.refreshSeconds * 1000,
+        now.getTime() + tokenLifetimes.inactivitySeconds * 1000,
+        absoluteExpiresAt.getTime()
+    ));
+}
 
-    user.refreshToken = refreshToken;
-    await user.save({ validateBeforeSave: false });
+async function createRefreshSession(user, { absoluteExpiresAt, previousTokenHashes = [] } = {}) {
+    const now = new Date();
+    const sessionId = new mongoose.Types.ObjectId();
+    const familyId = crypto.randomUUID();
+    const absoluteExpiry = absoluteExpiresAt || new Date(now.getTime() + tokenLifetimes.absoluteSeconds * 1000);
+    const expiresAt = refreshExpiry(now, absoluteExpiry);
+    const refreshToken = user.generateRefreshToken({ sid: String(sessionId), fid: familyId, jti: crypto.randomUUID() }, Math.max(1, Math.floor((expiresAt - now) / 1000)));
+    const accessToken = user.generateAccessToken({ sid: String(sessionId), fid: familyId });
 
-    return { accessToken, refreshToken };
-};
+    await RefreshSession.create({
+        _id: sessionId,
+        user: user._id,
+        familyId,
+        tokenHash: hashRefreshToken(refreshToken),
+        previousTokenHashes,
+        lastActivityAt: now,
+        expiresAt,
+        absoluteExpiresAt: absoluteExpiry,
+    });
+    return { accessToken, refreshToken, refreshMaxAge: Math.max(0, expiresAt - now) };
+}
 
+function setSessionCookies(res, tokens) {
+    return res
+        .cookie("accessToken", tokens.accessToken, cookieOptions(tokenLifetimes.accessSeconds * 1000))
+        .cookie("refreshToken", tokens.refreshToken, cookieOptions(tokens.refreshMaxAge));
+}
+
+async function revokeRefreshFamily(session, reason, now = new Date()) {
+    if (!session) return;
+    await RefreshSession.updateMany(
+        { familyId: session.familyId, revokedAt: null },
+        { $set: { revokedAt: now, revocationReason: reason } }
+    );
+}
+
+async function rotateLegacyRefreshToken(incomingToken, decodedToken) {
+    const oldHash = hashRefreshToken(incomingToken);
+    const user = await User.findOne({ _id: decodedToken._id, refreshToken: incomingToken });
+    if (!user) {
+        const reusedSession = await RefreshSession.findOne({ previousTokenHashes: oldHash });
+        if (reusedSession) {
+            await revokeRefreshFamily(reusedSession, "refresh-token-reuse");
+            throw new ApiError(401, "Refresh token reuse detected; the session was revoked");
+        }
+        throw new ApiError(401, "Refresh token is invalid or revoked");
+    }
+    if (!user.isActive) throw new ApiError(403, "Your account is disabled");
+    if (!user.isEmailVerified) throw new ApiError(403, "Please verify your email before continuing");
+
+    const tokenExpiry = new Date(decodedToken.exp * 1000);
+    const maximumExpiry = new Date(Date.now() + tokenLifetimes.absoluteSeconds * 1000);
+    const absoluteExpiresAt = new Date(Math.min(tokenExpiry.getTime(), maximumExpiry.getTime()));
+    if (absoluteExpiresAt <= new Date()) throw new ApiError(401, "Refresh token has expired");
+
+    const tokens = await createRefreshSession(user, { absoluteExpiresAt, previousTokenHashes: [oldHash] });
+    const revokedLegacy = await User.updateOne(
+        { _id: user._id, refreshToken: incomingToken },
+        { $set: { refreshToken: null } }
+    );
+    if (revokedLegacy.modifiedCount !== 1) {
+        const created = await RefreshSession.findOne({ tokenHash: hashRefreshToken(tokens.refreshToken) });
+        if (created) await revokeRefreshFamily(created, "legacy-token-reuse");
+        const reused = await RefreshSession.findOne({ previousTokenHashes: oldHash });
+        if (reused) await revokeRefreshFamily(reused, "legacy-token-reuse");
+        throw new ApiError(401, "Refresh token reuse detected; the session was revoked");
+    }
+    return { user, tokens };
+}
 // Generate email verification token
 const generateEmailVerificationToken = () => {
     const verificationToken = crypto.randomBytes(32).toString("hex");
@@ -62,7 +132,7 @@ const sendVerificationEmail = async (user, verificationToken) => {
     const verificationUrl =
         `${frontendUrl}/verify-email/${verificationToken}`;
 
-    await sendEmail({
+    const delivery = await sendEmail({
         email: user.email,
         subject: "Verify your Bhupee email",
         mailgenContent: emailVerificationMailgenContent(
@@ -70,6 +140,17 @@ const sendVerificationEmail = async (user, verificationToken) => {
             verificationUrl
         ),
     });
+    const acceptedRecipients = Array.isArray(delivery?.accepted)
+        ? delivery.accepted
+        : [];
+    const recipientAccepted = acceptedRecipients.some((recipient) => {
+        const address = typeof recipient === "string" ? recipient : recipient?.address;
+        return address?.toLowerCase() === user.email.toLowerCase();
+    });
+
+    if (!recipientAccepted) {
+        throw new Error("Verification email recipient was not accepted for sending");
+    }
 };
 
 // Register user
@@ -144,71 +225,62 @@ export const registerUser = asyncHandler(async (req, res) => {
 // Login user
 export const login = asyncHandler(async (req, res) => {
     const { email, password } = req.body || {};
+    if (!email || !password) throw new ApiError(400, "Email and password are required");
 
-    if (!email || !password) {
-        throw new ApiError(400, "Email and password are required");
-    }
+    const user = await User.findOne({ email: email.trim().toLowerCase() });
+    if (!user) throw new ApiError(401, "Invalid email or password");
+    if (!user.isActive) throw new ApiError(403, "Your account is disabled");
+    if (!(await user.isPasswordCorrect(password))) throw new ApiError(401, "Invalid email or password");
+    if (!user.isEmailVerified) throw new ApiError(403, "Please verify your email before logging in");
 
-    const normalizedEmail = email.trim().toLowerCase();
-    const user = await User.findOne({ email: normalizedEmail });
-
-    if (!user) {
-        throw new ApiError(401, "Invalid email or password");
-    }
-
-    if (!user.isActive) {
-        throw new ApiError(403, "Your account is disabled");
-    }
-
-    if (!user.isEmailVerified) {
-    throw new ApiError(
-        403,
-        "Please verify your email before logging in"
-    );
-}
-
-    const isPasswordValid = await user.isPasswordCorrect(password);
-
-    if (!isPasswordValid) {
-        throw new ApiError(401, "Invalid email or password");
-    }
-
-    // Email verification is not enforced at login yet.
-    const { accessToken, refreshToken } =
-        await generateAccessandRefreshTokens(user._id);
-
+    const tokens = await createRefreshSession(user);
+    // Clear only the legacy per-user refresh token; other new per-device sessions remain active.
+    await User.updateOne({ _id: user._id }, { $set: { refreshToken: null } });
     const loggedInUser = await User.findById(user._id).select(
         "-password -refreshToken -emailVerificationToken -emailVerificationExpiry"
     );
 
-    return res
-        .status(200)
-        .cookie("accessToken", accessToken, cookieOptions)
-        .cookie("refreshToken", refreshToken, cookieOptions)
-        .json(
-            new ApiResponse(
-                200,
-                { user: loggedInUser },
-                "User logged in successfully"
-            )
-        );
+    return setSessionCookies(res.status(200), tokens).json(
+        new ApiResponse(200, { user: loggedInUser }, "User logged in successfully")
+    );
 });
 
-// Logout user
+// Logout revokes the cookie-backed session even if its access token has expired.
 export const logoutUser = asyncHandler(async (req, res) => {
-    await User.findByIdAndUpdate(req.user._id, {
-        $set: { refreshToken: null },
-    });
+    const incomingRefreshToken = req.cookies?.refreshToken;
+    let decoded = null;
+    if (incomingRefreshToken) {
+        try {
+            decoded = verifySignedToken(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET, "refresh", true);
+        } catch {
+            // A malformed or forged cookie cannot identify a session; clear it below.
+        }
+    }
 
-    return res
-        .status(200)
-        .clearCookie("accessToken", cookieOptions)
-        .clearCookie("refreshToken", cookieOptions)
-        .json(
-            new ApiResponse(200, {}, "User logged out successfully")
-        );
+    if (decoded?.sid) {
+        const session = await RefreshSession.findById(decoded.sid);
+        if (session && String(session.user) === String(decoded._id)) await revokeRefreshFamily(session, "logout");
+    } else if (decoded?._id && incomingRefreshToken) {
+        await User.updateOne({ _id: decoded._id, refreshToken: incomingRefreshToken }, { $set: { refreshToken: null } });
+    }
+
+    return res.status(200)
+        .clearCookie("accessToken", cookieClearOptions())
+        .clearCookie("refreshToken", cookieClearOptions())
+        .json(new ApiResponse(200, {}, "User logged out successfully"));
 });
-
+export const logoutAllSessions = asyncHandler(async (req, res) => {
+    const now = new Date();
+    await RefreshSession.updateMany(
+        { user: req.user._id, revokedAt: null },
+        { $set: { revokedAt: now, revocationReason: "logout-all" } }
+    );
+    await User.updateOne({ _id: req.user._id }, { $set: { refreshToken: null }, $inc: { authVersion: 1 } });
+    return res.status(200)
+        .clearCookie("accessToken", cookieClearOptions())
+        .clearCookie("refreshToken", cookieClearOptions())
+        .json(new ApiResponse(200, {}, "All sessions have been logged out"));
+});
 // Get current logged-in user
 export const getCurrentUser = asyncHandler(async (req, res) => {
     return res.status(200).json(
@@ -308,183 +380,149 @@ export const resendVerificationEmail = asyncHandler(async (req, res) => {
     );
 });
 
-// Refresh access token
+// Refresh access token and rotate the hashed refresh token for this session.
 export const refreshAccessToken = asyncHandler(async (req, res) => {
-    const incomingRefreshToken = req.cookies?.refreshToken;
-
-    if (!incomingRefreshToken) {
-        throw new ApiError(401, "Refresh token is required");
-    }
-
-    let decodedToken;
-
     try {
-        const secret = process.env.REFRESH_TOKEN_SECRET;
+    const incomingRefreshToken = req.cookies?.refreshToken;
+    if (!incomingRefreshToken) throw new ApiError(401, "Refresh token is required");
 
-        if (!secret) {
-            throw new Error("Refresh token secret is not configured");
+    const decodedToken = verifySignedToken(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET, "refresh");
+    const incomingHash = hashRefreshToken(incomingRefreshToken);
+
+    if (!decodedToken.token_use) {
+        const migrated = await rotateLegacyRefreshToken(incomingRefreshToken, decodedToken);
+        return setSessionCookies(res.status(200), migrated.tokens).json(
+            new ApiResponse(200, {}, "Access token refreshed successfully")
+        );
+    }
+
+    if (!decodedToken.sid || !decodedToken.fid || !decodedToken.jti) throw new ApiError(401, "Invalid refresh token");
+    const session = await RefreshSession.findById(decodedToken.sid);
+    if (!session || String(session.user) !== String(decodedToken._id) || session.familyId !== decodedToken.fid) {
+        const reusedSession = await RefreshSession.findOne({ previousTokenHashes: incomingHash });
+        if (reusedSession) await revokeRefreshFamily(reusedSession, "refresh-token-reuse");
+        throw new ApiError(401, reusedSession ? "Refresh token reuse detected; the session was revoked" : "Refresh token is invalid or revoked");
+    }
+
+    if (session.revokedAt) throw new ApiError(401, "Refresh token is invalid or revoked");
+    if (session.tokenHash !== incomingHash) {
+        if (session.previousTokenHashes.includes(incomingHash)) {
+            await revokeRefreshFamily(session, "refresh-token-reuse");
+            throw new ApiError(401, "Refresh token reuse detected; the session was revoked");
         }
-
-        decodedToken = jwt.verify(incomingRefreshToken, secret);
-    } catch {
-        throw new ApiError(401, "Invalid or expired refresh token");
-    }
-
-    if (typeof decodedToken === "string" || !decodedToken._id) {
-        throw new ApiError(401, "Invalid refresh token");
-    }
-
-    const user = await User.findById(decodedToken._id);
-
-    if (!user || user.refreshToken !== incomingRefreshToken) {
         throw new ApiError(401, "Refresh token is invalid or revoked");
     }
 
+    const now = new Date();
+    if (session.expiresAt <= now || session.absoluteExpiresAt <= now) {
+        await revokeRefreshFamily(session, "expired");
+        throw new ApiError(401, "Refresh session has expired");
+    }
+
+    const user = await User.findById(decodedToken._id);
+    if (!user) throw new ApiError(401, "User not found or refresh token is invalid");
     if (!user.isActive) {
+        await revokeRefreshFamily(session, "account-disabled");
         throw new ApiError(403, "Your account is disabled");
     }
+    if (!user.isEmailVerified) {
+        await revokeRefreshFamily(session, "email-unverified");
+        throw new ApiError(403, "Please verify your email before continuing");
+    }
 
-    const { accessToken, refreshToken } =
-        await generateAccessandRefreshTokens(user._id);
+    const nextExpiry = refreshExpiry(now, session.absoluteExpiresAt);
+    const nextRefreshToken = user.generateRefreshToken(
+        { sid: String(session._id), fid: session.familyId, jti: crypto.randomUUID() },
+        Math.max(1, Math.floor((nextExpiry - now) / 1000))
+    );
+    const accessToken = user.generateAccessToken({ sid: String(session._id), fid: session.familyId });
+    const nextHash = hashRefreshToken(nextRefreshToken);
+    const rotated = await RefreshSession.findOneAndUpdate(
+        { _id: session._id, tokenHash: incomingHash, revokedAt: null, expiresAt: { $gt: now }, absoluteExpiresAt: { $gt: now } },
+        { $set: { tokenHash: nextHash, expiresAt: nextExpiry, lastActivityAt: now }, $push: { previousTokenHashes: incomingHash } },
+        { new: true }
+    );
 
-    return res
-        .status(200)
-        .cookie("accessToken", accessToken, cookieOptions)
-        .cookie("refreshToken", refreshToken, cookieOptions)
-        .json(
-            new ApiResponse(
-                200,
-                {},
-                "Access token refreshed successfully"
-            )
-        );
+    if (!rotated) {
+        const latestSession = await RefreshSession.findById(session._id);
+        if (latestSession && latestSession.previousTokenHashes.includes(incomingHash)) {
+            await revokeRefreshFamily(latestSession, "refresh-token-reuse");
+            throw new ApiError(401, "Refresh token reuse detected; the session was revoked");
+        }
+        throw new ApiError(401, "Refresh token is invalid or expired");
+    }
+
+    return setSessionCookies(res.status(200), {
+        accessToken,
+        refreshToken: nextRefreshToken,
+        refreshMaxAge: Math.max(0, nextExpiry - now),
+    }).json(new ApiResponse(200, {}, "Access token refreshed successfully"));
+    } catch (error) {
+        if (error instanceof ApiError && (error.statusCode === 401 || error.statusCode === 403)) {
+            res.clearCookie("accessToken", cookieClearOptions());
+            res.clearCookie("refreshToken", cookieClearOptions());
+        }
+        throw error;
+    }
 });
-
 export const forgotPassword = asyncHandler(async (req, res) => {
     const { email } = req.body || {};
-
-    if (!email || typeof email !== "string") {
-        throw new ApiError(400, "A valid email is required");
-    }
+    if (!email || typeof email !== "string") throw new ApiError(400, "A valid email is required");
 
     const normalizedEmail = email.trim().toLowerCase();
+    const genericMessage = "If an account exists for that email, a password-reset link will be sent.";
     const user = await User.findOne({ email: normalizedEmail });
-
-    // Don't reveal whether an account exists.
-    const message =
-        "If an account exists for that email, a password-reset link will be sent.";
-
-    if (!user) {
-        return res.status(200).json(
-            new ApiResponse(200, {}, message)
-        );
-    }
+    if (!user) return res.status(200).json(new ApiResponse(200, {}, genericMessage));
 
     const resetToken = crypto.randomBytes(32).toString("hex");
-
-    const hashedToken = crypto
-        .createHash("sha256")
-        .update(resetToken)
-        .digest("hex");
-
+    const hashedToken = crypto.createHash("sha256").update(resetToken).digest("hex");
     user.resetPasswordToken = hashedToken;
-    user.resetPasswordExpiry = new Date(Date.now() + 20 * 60 * 1000);
-
+    user.resetPasswordExpiry = new Date(Date.now() + 15 * 60 * 1000);
     await user.save({ validateBeforeSave: false });
 
-    const frontendUrl = (
-        process.env.FRONTEND_URL || "http://localhost:5173"
-    ).replace(/\/$/, "");
-
-    const passwordResetUrl =
-        `${frontendUrl}/reset-password/${resetToken}`;
-
+    const frontendUrl = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
+    const passwordResetUrl = frontendUrl + "/reset-password/" + encodeURIComponent(resetToken);
     try {
         await sendEmail({
             email: user.email,
-            subject: "Reset your Bhupee password",
-            mailgenContent: forgotPasswordMailgenContent(
-                user.fullName,
-                passwordResetUrl
-            ),
+            subject: "Reset your Safar password",
+            mailgenContent: forgotPasswordMailgenContent(user.fullName, passwordResetUrl),
         });
-    } catch (error) {
-        user.resetPasswordToken = null;
-        user.resetPasswordExpiry = null;
-        await user.save({ validateBeforeSave: false });
-
-        console.error("Password-reset email failed:", error.message);
-
-        throw new ApiError(
-            503,
-            "Unable to send the reset email right now. Please try again later."
+    } catch {
+        await User.updateOne(
+            { _id: user._id, resetPasswordToken: hashedToken },
+            { $set: { resetPasswordToken: null, resetPasswordExpiry: null } }
         );
+        // Keep the response identical for unknown users and mail failures.
     }
 
-    return res.status(200).json(
-        new ApiResponse(200, {}, message)
-    );
+    return res.status(200).json(new ApiResponse(200, {}, genericMessage));
 });
-
-
 export const resetPassword = asyncHandler(async (req, res) => {
     const { token } = req.params;
     const { password } = req.body || {};
+    if (typeof token !== "string" || token.length < 32) throw new ApiError(400, "Reset link is invalid or expired");
+    if (typeof password !== "string" || password.length < 8) throw new ApiError(400, "Password must be at least 8 characters long");
 
-    if (!token) {
-        throw new ApiError(400, "Reset token is required");
-    }
+    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+    // Atomically consume the token so two simultaneous submissions cannot both succeed.
+    const user = await User.findOneAndUpdate(
+        { resetPasswordToken: hashedToken, resetPasswordExpiry: { $gt: new Date() } },
+        { $set: { resetPasswordToken: null, resetPasswordExpiry: null, refreshToken: null } },
+        { new: true }
+    );
+    if (!user) throw new ApiError(400, "Reset link is invalid, expired, or already used");
 
-    if (
-        typeof password !== "string" ||
-        password.length < 8
-    ) {
-        throw new ApiError(
-            400,
-            "Password must be at least 8 characters long"
-        );
-    }
-
-    const hashedToken = crypto
-        .createHash("sha256")
-        .update(token)
-        .digest("hex");
-
-    const user = await User.findOne({
-        resetPasswordToken: hashedToken,
-        resetPasswordExpiry: { $gt: new Date() },
-    });
-
-    if (!user) {
-        throw new ApiError(
-            400,
-            "Password-reset link is invalid or expired"
-        );
-    }
-
-    // Assigning the password should trigger your existing bcrypt
-    // pre-save hook, if your User model has one.
+    await RefreshSession.updateMany(
+        { user: user._id, revokedAt: null },
+        { $set: { revokedAt: new Date(), revocationReason: "password-reset" } }
+    );
+    user.authVersion = (user.authVersion || 0) + 1;
     user.password = password;
-
-    // Consume the token so it cannot be reused.
-    user.resetPasswordToken = null;
-    user.resetPasswordExpiry = null;
-
-    // Revoke the stored refresh token so old sessions cannot renew.
-    user.refreshToken = null;
-
     await user.save();
 
-    // Clear cookies if the browser has them.
-    return res
-        .status(200)
-        .clearCookie("accessToken", cookieOptions)
-        .clearCookie("refreshToken", cookieOptions)
-        .json(
-            new ApiResponse(
-                200,
-                {},
-                "Password reset successfully. Please log in again."
-            )
-        );
+    return res.status(200)
+        .clearCookie("accessToken", cookieClearOptions())
+        .clearCookie("refreshToken", cookieClearOptions())
+        .json(new ApiResponse(200, {}, "Password reset successfully. Please log in again."));
 });

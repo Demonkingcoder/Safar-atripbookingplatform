@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 import bcrypt from "bcrypt";
+import { tokenLifetimes, tokenSigningOptions } from "../utils/token-policy.js";
 
 const userSchema = new mongoose.Schema(
   {
@@ -41,6 +42,7 @@ const userSchema = new mongoose.Schema(
     },
 
     // JWT Tokens
+    authVersion: { type: Number, default: 0 },
     refreshToken: {
       type: String
     },
@@ -98,34 +100,25 @@ userSchema.methods.isPasswordCorrect = async function (password) {
   return bcrypt.compare(password, this.password);
 };
 
-userSchema.methods.generateAccessToken = function(){
+userSchema.methods.generateAccessToken = function(sessionClaims = {}){
     const secret = process.env.ACCESS_TOKEN_SECRET;
-    const expiry = process.env.ACCESS_TOKEN_EXPIRY;
+    if (!secret) throw new Error("Access token secret is not configured");
     return jwt.sign(
-        {
-            _id: this._id,
-            email: this.email,
-            fullName: this.fullName
-        },
+        { ...sessionClaims, _id: this._id, email: this.email, fullName: this.fullName, authVersion: this.authVersion || 0, token_use: "access" },
         secret,
-        { expiresIn: expiry }
-    )
+        tokenSigningOptions("access", tokenLifetimes.accessSeconds)
+    );
 }
 
-userSchema.methods.generateRefreshToken = function(){
-    const secret =
-        process.env.REFRESH_TOKEN_SECRET;
-    const expiry =
-        process.env.REFRESH_TOKEN_EXPIRY;
+userSchema.methods.generateRefreshToken = function(sessionClaims = {}, expiresIn = tokenLifetimes.refreshSeconds){
+    const secret = process.env.REFRESH_TOKEN_SECRET;
+    if (!secret) throw new Error("Refresh token secret is not configured");
     return jwt.sign(
-        {
-            _id: this._id,
-        },
+        { _id: this._id, ...sessionClaims, token_use: "refresh" },
         secret,
-        { expiresIn: expiry }
-    )
+        tokenSigningOptions("refresh", expiresIn)
+    );
 }
-
 const User = mongoose.model("User", userSchema);
 
 export default User;

@@ -56,11 +56,15 @@ const departureSchema = new mongoose.Schema(
       enum: ["scheduled", "cancelled", "completed"],
       default: "scheduled",
     },
+    cancellationReason: { type: String, maxlength: 500, default: null },
+    cancelledAt: { type: Date, default: null },
+    cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   },
   { timestamps: true }
 );
 
 departureSchema.index({ trip: 1, startDate: 1 });
+departureSchema.index({ status: 1, startDate: 1 });
 
 const Departure = mongoose.model("Departure", departureSchema);
 

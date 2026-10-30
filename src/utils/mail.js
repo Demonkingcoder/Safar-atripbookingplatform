@@ -10,7 +10,7 @@ const frontendUrl = (
 const mailGenerator = new Mailgen({
     theme: "default",
     product: {
-        name: "tripplanner",
+        name: "Safar",
         link: frontendUrl,
     },
 });
@@ -27,29 +27,30 @@ const transporter = nodemailer.createTransport({
 });
 
 // Send an email
-const sendEmail = async ({ email, subject, mailgenContent }) => {
+const sendEmail = async ({ email, subject, mailgenContent, htmlContent, textContent, messageId }) => {
     if (!process.env.BREVO_SENDER_EMAIL) {
         throw new Error("BREVO_SENDER_EMAIL is not configured");
     }
 
-    if (!email || !subject || !mailgenContent) {
+    if (!email || !subject || (!mailgenContent && (!htmlContent || !textContent))) {
         throw new Error(
             "Email recipient, subject, and content are required"
         );
     }
 
-    const emailHtml = mailGenerator.generate(mailgenContent);
-    const emailText = mailGenerator.generatePlaintext(mailgenContent);
+    const emailHtml = htmlContent || mailGenerator.generate(mailgenContent);
+    const emailText = textContent || mailGenerator.generatePlaintext(mailgenContent);
 
     return transporter.sendMail({
         from: {
-            name: "tripplanner",
+        name: "Safar",
             address: process.env.BREVO_SENDER_EMAIL,
         },
         to: email,
         subject,
         text: emailText,
         html: emailHtml,
+        ...(messageId ? { messageId } : {}),
     });
 };
 
@@ -65,18 +66,18 @@ const emailVerificationMailgenContent = (
 ) => ({
     body: {
         name: fullName,
-        intro: "Welcome to Bhupee! We're excited to help you plan your next trip.",
+        intro: "Welcome to Safar! We're excited to help you plan your next trip.",
         action: {
             instructions:
                 "Click the button below to verify your email address. This link expires in 30 minutes.",
             button: {
-                color: "#2563eb",
+                color: "#183D3A",
                 text: "Verify Email",
                 link: verificationUrl,
             },
         },
         outro:
-            "If you didn't create a Bhupee account, you can safely ignore this email.",
+            "If you didn't create a Safar account, you can safely ignore this email.",
     },
 });
 
@@ -88,18 +89,42 @@ const forgotPasswordMailgenContent = (
     body: {
         name: fullName,
         intro:
-            "We received a request to reset your Bhupee account password.",
+            "We received a request to reset your Safar account password.",
         action: {
             instructions:
-                "Click the button below to reset your password. This link expires in 20 minutes.",
+                "Click the button below to reset your password. This secure link expires in 15 minutes.",
             button: {
-                color: "#2563eb",
+                color: "#183D3A",
                 text: "Reset Password",
                 link: passwordResetUrl,
             },
         },
         outro:
-            "If you didn't request a password reset, you can safely ignore this email.",
+            "If you didn't request a password reset, you can safely ignore this email. Your password will not change unless you use the link above.",
+    },
+});
+
+const bookingConfirmationMailgenContent = (fullName, tripTitle, bookingReference) => ({
+    body: {
+        name: fullName,
+        intro: `Your booking for ${tripTitle} is confirmed. Your tickets are ready. Booking reference: ${bookingReference}.`,
+        outro: "Keep this reference for your trip and contact Safar if you need help.",
+    },
+});
+
+const bookingCancellationMailgenContent = (fullName, tripTitle, reason, refundMessage) => ({
+    body: {
+        name: fullName,
+        intro: `Your booking for ${tripTitle} has been cancelled.`,
+        outro: `${reason ? `Reason: ${reason}. ` : ""}${refundMessage}`,
+    },
+});
+
+const departureCancellationMailgenContent = (fullName, tripTitle, reason) => ({
+    body: {
+        name: fullName,
+        intro: `The scheduled departure for ${tripTitle} has been cancelled by Safar.`,
+        outro: `Reason: ${reason}. We are checking your booking and payment status. Safar will contact you with the cancellation or refund update; please do not make another payment for this departure.`,
     },
 });
 
@@ -108,4 +133,7 @@ export {
     verifyEmailTransport,
     emailVerificationMailgenContent,
     forgotPasswordMailgenContent,
+    bookingConfirmationMailgenContent,
+    bookingCancellationMailgenContent,
+    departureCancellationMailgenContent,
 };

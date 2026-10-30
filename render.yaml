@@ -1,0 +1,90 @@
+services:
+  - type: web
+    name: safar-api
+    runtime: node
+    region: singapore
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/v1/healthcheck
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RUN_NOTIFICATION_WORKER
+        value: "false"
+      - key: MONGO_URI
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: ACCESS_TOKEN_SECRET
+        sync: false
+      - key: REFRESH_TOKEN_SECRET
+        sync: false
+      - key: ACCESS_TOKEN_EXPIRY
+        value: 15m
+      - key: REFRESH_TOKEN_EXPIRY
+        value: 7d
+      - key: REFRESH_TOKEN_INACTIVITY_EXPIRY
+        value: 7d
+      - key: REFRESH_SESSION_ABSOLUTE_EXPIRY
+        value: 7d
+      - key: JWT_ISSUER
+        value: safar-api
+      - key: JWT_AUDIENCE
+        value: safar-frontend
+      - key: COOKIE_SAME_SITE
+        value: none
+      - key: RAZORPAY_MODE
+        sync: false
+      - key: RAZORPAY_TEST_KEY_ID
+        sync: false
+      - key: RAZORPAY_TEST_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_TEST_WEBHOOK_SECRET
+        sync: false
+      - key: RAZORPAY_LIVE_KEY_ID
+        sync: false
+      - key: RAZORPAY_LIVE_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_LIVE_WEBHOOK_SECRET
+        sync: false
+      - key: BREVO_SMTP_HOST
+        sync: false
+      - key: BREVO_SMTP_PORT
+        value: "587"
+      - key: BREVO_SMTP_USER
+        sync: false
+      - key: BREVO_SMTP_PASS
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: SAFAR_ADMIN_NOTIFICATION_EMAILS
+        sync: false
+
+  - type: worker
+    name: safar-notification-worker
+    runtime: node
+    region: singapore
+    buildCommand: npm ci
+    startCommand: npm run worker
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGO_URI
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: BREVO_SMTP_HOST
+        sync: false
+      - key: BREVO_SMTP_PORT
+        value: "587"
+      - key: BREVO_SMTP_USER
+        sync: false
+      - key: BREVO_SMTP_PASS
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: SAFAR_ADMIN_NOTIFICATION_EMAILS
+        sync: false

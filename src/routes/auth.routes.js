@@ -4,6 +4,7 @@ import { Router } from "express";
 import {
     login,
     logoutUser,
+    logoutAllSessions,
     registerUser,
     getCurrentUser,
     verifyEmail,
@@ -18,6 +19,7 @@ import { validate } from "../middlewares/validator.middleware.js";
 
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 import { authLimiter } from "../middlewares/ratelimiter.middleware.js";
+import { verifySameOrigin } from "../middlewares/csrf.middleware.js";
 
 import {
     loginValidator,
@@ -46,7 +48,7 @@ router.post(
 );
 router.get("/verify-email/:token", verifyEmail);
 router.post("/resend-verification", authLimiter, resendVerificationEmail);
-router.post("/refresh-token", refreshAccessToken);
+router.post("/refresh-token", authLimiter, verifySameOrigin, refreshAccessToken);
 router.post(
     "/forgot-password",
     authLimiter,
@@ -65,6 +67,7 @@ router.post(
 
 // Protected routes
 router.get("/current-user", verifyJWT, getCurrentUser);
-router.post("/logout", verifyJWT, logoutUser);
+router.post("/logout", verifySameOrigin, logoutUser);
+router.post("/logout-all", verifyJWT, verifySameOrigin, logoutAllSessions);
 
 export default router;
