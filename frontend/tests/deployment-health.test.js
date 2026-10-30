@@ -30,6 +30,19 @@ test('API readiness fails closed unless the database and transaction capability 
   }
 })
 
+test('API health readiness does not depend on the frontend deployment', async () => {
+  const originalReadyState = mongoose.connection.readyState
+  mongoose.connection.readyState = 1
+  await detectTransactionSupport({ db: { admin: () => ({ command: async () => ({ setName: 'rs0' }) }) } })
+  try {
+    const result = await invoke(healthCheck)
+    assert.equal(result.statusCode, 200)
+    assert.equal(result.body.data.api, 'ready')
+  } finally {
+    mongoose.connection.readyState = originalReadyState
+  }
+})
+
 test('worker probe reports the fresh Mongo heartbeat and detects dead-letter jobs', async () => {
   const originalReadyState = mongoose.connection.readyState
   const originalFind = NotificationWorkerHeartbeat.findById

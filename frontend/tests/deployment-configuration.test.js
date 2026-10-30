@@ -4,7 +4,7 @@ import { validateRuntimeConfiguration } from '../../src/utils/runtime-configurat
 import { findUniqueIndexConflicts } from '../../src/utils/index-preflight.js'
 
 const names = [
-  'NODE_ENV', 'MONGO_URI', 'FRONTEND_URL', 'API_PUBLIC_URL', 'COOKIE_SITE_DOMAIN', 'CORS_ORIGIN', 'BREVO_SMTP_HOST', 'BREVO_SMTP_PORT',
+  'NODE_ENV', 'MONGO_URI', 'FRONTEND_URL', 'API_PUBLIC_URL', 'COOKIE_SITE_DOMAIN', 'COOKIE_DOMAIN', 'CORS_ORIGIN', 'BREVO_SMTP_HOST', 'BREVO_SMTP_PORT',
   'BREVO_SMTP_USER', 'BREVO_SMTP_PASS', 'BREVO_SENDER_EMAIL', 'RUN_NOTIFICATION_WORKER',
   'ACCESS_TOKEN_SECRET', 'REFRESH_TOKEN_SECRET', 'COOKIE_SAME_SITE', 'RAZORPAY_MODE',
   'RAZORPAY_TEST_KEY_ID', 'RAZORPAY_TEST_KEY_SECRET', 'RAZORPAY_TEST_WEBHOOK_SECRET',
@@ -16,7 +16,7 @@ function withProductionEnv(overrides, run) {
   const values = {
     NODE_ENV: 'production', MONGO_URI: 'mongodb+srv://cluster.example.test/safar',
     FRONTEND_URL: 'https://staging.safar.example', API_PUBLIC_URL: 'https://api-staging.safar.example',
-    COOKIE_SITE_DOMAIN: 'safar.example', CORS_ORIGIN: 'https://staging.safar.example',
+    COOKIE_SITE_DOMAIN: 'safar.example', COOKIE_DOMAIN: '', CORS_ORIGIN: 'https://staging.safar.example',
     BREVO_SMTP_HOST: 'smtp.example.test', BREVO_SMTP_PORT: '587', BREVO_SMTP_USER: 'smtp-user',
     BREVO_SMTP_PASS: 'smtp-password-placeholder', BREVO_SENDER_EMAIL: 'notifications@example.test',
     RUN_NOTIFICATION_WORKER: 'false', ACCESS_TOKEN_SECRET: 'access-secret-placeholder',
@@ -25,7 +25,10 @@ function withProductionEnv(overrides, run) {
     RAZORPAY_LIVE_KEY_ID: 'live-id', RAZORPAY_LIVE_KEY_SECRET: 'live-secret', RAZORPAY_LIVE_WEBHOOK_SECRET: 'live-webhook',
     ...overrides,
   }
-  for (const name of names) process.env[name] = values[name]
+  for (const name of names) {
+    if (values[name] === undefined) delete process.env[name]
+    else process.env[name] = values[name]
+  }
   try { return run() } finally {
     for (const name of names) {
       if (previous[name] === undefined) delete process.env[name]
@@ -41,6 +44,25 @@ test('production runtime configuration accepts exact same-site staging origins',
   })
 })
 
+test('production accepts cross-site Vercel and Render origins with Secure SameSite=None host-only cookies', async () => {
+  const { cookieOptions } = await import('../../src/utils/token-policy.js')
+  withProductionEnv({
+    FRONTEND_URL: 'https://safar-preview.vercel.app',
+    API_PUBLIC_URL: 'https://safar-api.onrender.com',
+    COOKIE_SITE_DOMAIN: 'safar-api.onrender.com',
+    COOKIE_DOMAIN: '',
+    COOKIE_SAME_SITE: 'none',
+    CORS_ORIGIN: 'https://safar-preview.vercel.app',
+  }, () => {
+    assert.equal(validateRuntimeConfiguration('api'), true)
+    const cookie = cookieOptions(60_000)
+    assert.equal(cookie.httpOnly, true)
+    assert.equal(cookie.secure, true)
+    assert.equal(cookie.sameSite, 'none')
+    assert.equal(Object.hasOwn(cookie, 'domain'), false)
+  })
+})
+
 test('production API rejects local fallbacks, wildcard CORS, and an API that starts a second worker', () => {
   withProductionEnv({ FRONTEND_URL: 'http://localhost:5173' }, () => {
     assert.throws(() => validateRuntimeConfiguration('api'), /public HTTPS origin/)
@@ -53,6 +75,15 @@ test('production API rejects local fallbacks, wildcard CORS, and an API that sta
   })
   withProductionEnv({ API_PUBLIC_URL: 'https://api.other.example' }, () => {
     assert.throws(() => validateRuntimeConfiguration('api'), /COOKIE_SITE_DOMAIN/)
+  })
+  withProductionEnv({ COOKIE_SAME_SITE: 'strict' }, () => {
+    assert.throws(() => validateRuntimeConfiguration('api'), /COOKIE_SAME_SITE/)
+  })
+  withProductionEnv({ COOKIE_SAME_SITE: 'none', COOKIE_DOMAIN: 'safar.example' }, () => {
+    assert.throws(() => validateRuntimeConfiguration('api'), /COOKIE_DOMAIN/)
+  })
+  withProductionEnv({ FRONTEND_URL: undefined }, () => {
+    assert.throws(() => validateRuntimeConfiguration('api'), /FRONTEND_URL/)
   })
 })
 
