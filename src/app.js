@@ -14,27 +14,30 @@ app.use(express.static("public"));
 app.use(cookieParser());
 app.set("trust proxy", 1);
 
-// Credentialed CORS uses explicit origins; a wildcard cannot be combined with cookies.
-const configuredOrigins = (process.env.CORS_ORIGIN || process.env.CORS || "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter((origin) => origin && origin !== "*");
-if (configuredOrigins.length === 0) {
-    configuredOrigins.push(process.env.FRONTEND_URL || "http://localhost:5173");
-}
-const allowedOrigins = configuredOrigins.map((origin) => {
-    try { return new URL(origin).origin; } catch { return origin.replace(/\/$/, ""); }
-});
+const allowedOrigins = [
+  "https://safar-atripbookingplatform.vercel.app",
+];
 
-app.use(cors({
+app.use(
+  cors({
     origin(origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-        return callback(null, false);
+      const isAllowed =
+        !origin ||
+        allowedOrigins.includes(origin) ||
+        /^https:\/\/safar-atripbookingplatform(?:-[a-z0-9-]+)?-demonkingcoder\.vercel\.app$/.test(origin);
+
+      callback(isAllowed ? null : new Error("Origin not allowed by CORS"), isAllowed);
     },
     credentials: true,
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "X-Razorpay-Signature"],
-}));
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Idempotency-Key",
+      "X-Razorpay-Signature",
+    ],
+  })
+);
 // Import routes
 import healthCheckRouter from "./routes/healthCheck.routes.js";
 import authRouter from "./routes/auth.routes.js";
