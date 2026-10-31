@@ -5,7 +5,6 @@ import { AnimatePresence, motion, useReducedMotion, useScroll, useTransform } fr
 import tripService from '../services/tripService'
 import Loaders from '../component/ui/Loaders'
 import formatCurrency from '../utils/formatCurrency'
-import { formatDate } from '../utils/formatDate'
 import { useLanguage } from '../context/LanguageContext'
 import { localizedApiError } from '../utils/localizedApiError'
 
@@ -93,11 +92,7 @@ function TripDetails() {
     ? trip.images[0]
     : trip.images
 
-  const price =
-    trip.startingPrice ?? trip.basePrice ?? trip.price ??
-    (typeof trip.pricing === 'number'
-      ? trip.pricing
-      : trip.pricing?.pricePerPerson ?? trip.pricing?.basePrice)
+  const price = trip.basePrice
 
   const inclusions = Array.isArray(trip.inclusions)
     ? trip.inclusions
@@ -258,14 +253,14 @@ function TripDetails() {
 
         {/* Booking summary */}
         <motion.aside initial={reduceMotion ? false : { opacity: 0, y: 18 }} whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.2 }} transition={{ duration: 0.5 }} className="h-fit rounded-2xl border border-forest/10 bg-white p-6 lg:sticky lg:top-28">
-          <p className="text-sm text-charcoal-light">{trip.startingPriceSource === 'basePrice' ? t('trip.baseLabel') : t('trip.fullPrice')}</p>
+          <p className="text-sm text-charcoal-light">{t('trip.fullPrice')}</p>
 
           <motion.p initial={reduceMotion ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.32, duration: 0.4 }} className="mt-2 font-heading text-3xl font-semibold text-forest">
             {price != null ? formatCurrency(price, 'INR', locale) : t('trip.seeDepartures')}
           </motion.p>
 
           <p className="mt-1 text-xs text-charcoal-light">
-            {trip.startingPriceSource === 'basePrice' ? t('trip.baseHint') : `${t('trip.perTraveller')} · ${trip.startingDepartureDate ? formatDate(trip.startingDepartureDate, {}, locale) : ''}`}
+            {t('trip.perTraveller')}
           </p>
 
           <Link to={`/trips/${slug}/book`} className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-forest px-6 py-4 text-base font-bold text-white shadow-sm transition hover:bg-forest-dark focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-forest-light">

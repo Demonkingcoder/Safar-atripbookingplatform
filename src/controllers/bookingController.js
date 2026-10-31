@@ -326,6 +326,12 @@ const createBooking = asyncHandler(async (req, res) => {
 
   const trip = await Trip.findOne({ _id: departure.trip, status: "published" });
   if (!trip) throw new ApiError(404, "Trip not found or unavailable");
+  const pricePerSeat = trip.basePrice;
+  if (typeof pricePerSeat !== "number" || !Number.isFinite(pricePerSeat) || pricePerSeat < 0) {
+    throw new ApiError(409, "This trip does not have a valid payable price");
+  }
+  const totalAmount = pricePerSeat * numberOfSeats;
+  if (!Number.isFinite(totalAmount)) throw new ApiError(409, "This trip does not have a valid payable price");
 
   requireTransactionSupport();
   let booking;
@@ -351,8 +357,8 @@ const createBooking = asyncHandler(async (req, res) => {
         departure: reservedDeparture._id,
         numberOfSeats,
         notificationLanguage: req.body?.notificationLanguage === "hi" ? "hi" : "en",
-        pricePerSeat: reservedDeparture.price,
-        totalAmount: reservedDeparture.price * numberOfSeats,
+        pricePerSeat,
+        totalAmount,
         status: "pending",
         paymentStatus: "pending",
         expiresAt: new Date(Date.now() + 15 * 60 * 1000),
@@ -643,6 +649,17 @@ const createPaymentOrder = asyncHandler(async (req, res) => {
   }
   if (booking.expiresAt && booking.expiresAt <= new Date()) {
     throw new ApiError(409, "This booking has expired. Start a new booking to reserve seats.");
+  }
+
+  // Pending legacy bookings may have been priced from Departure.price. Require review
+  // before issuing a new payment order at an amount that differs from today's Trip price.
+  const trip = await Trip.findById(booking.trip);
+  const currentTripPrice = trip?.basePrice;
+  if (typeof currentTripPrice !== "number" || !Number.isFinite(currentTripPrice) || currentTripPrice < 0) {
+    throw new ApiError(409, "This booking cannot be paid because the trip price is unavailable. Please contact Safar support.");
+  }
+  if (booking.pricePerSeat !== currentTripPrice || booking.totalAmount !== currentTripPrice * booking.numberOfSeats) {
+    throw new ApiError(409, "This pending booking uses an outdated trip price. Please contact Safar support to review it before paying.");
   }
 
   const amount = Math.round(booking.totalAmount * 100);

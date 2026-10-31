@@ -85,7 +85,7 @@ function request({ userId = 'customer-a', departureId = '64b00000000000000000000
   }
 }
 
-function makeSeatInventory(initialSeats) {
+function makeSeatInventory(initialSeats, tripBasePrice = 250) {
   let availableSeats = initialSeats
   const bookings = []
   const departure = { _id: '64b000000000000000000001', trip: 'trip-a', price: 250, availableSeats, status: 'scheduled', startDate: new Date(Date.now() + 86400000) }
@@ -103,7 +103,7 @@ function makeSeatInventory(initialSeats) {
         async findOne() { return { ...departure } },
         findOneAndUpdate(filter, update) { return this.reserve(filter, update) },
       },
-      Trip: { async findOne() { return { _id: 'trip-a' } } },
+      Trip: { async findOne() { return { _id: 'trip-a', basePrice: tripBasePrice } }, async findById() { return { _id: 'trip-a', basePrice: tripBasePrice } } },
       Booking: {
         async findOne(filter) { return bookings.find((booking) => booking.user === filter.user && booking.idempotencyKey === filter.idempotencyKey) || null },
         async create(records) {
@@ -132,15 +132,27 @@ function inventoryOverrides(inventory) {
 function transactionOverride() {
   return { model: mongoose, methods: { async startSession() { return { async withTransaction(callback) { await callback() }, async endSession() {} } } } }
 }
-test('one booking reserves and prices four travellers on the server', async () => {
-  const inventory = makeSeatInventory(4)
+test('booking uses Trip.basePrice rather than Departure.price for four travellers', async () => {
+  const inventory = makeSeatInventory(4, 900)
   await withOverrides(inventoryOverrides(inventory), async () => {
     const result = await invoke(createBooking, request({ numberOfSeats: 4, key: 'four-seat-booking' }))
     const booking = result.body.data.booking
     assert.equal(result.statusCode, 201)
     assert.equal(booking.numberOfSeats, 4)
-    assert.equal(booking.totalAmount, 1000)
+    assert.equal(booking.pricePerSeat, 900)
+    assert.equal(booking.totalAmount, 3600)
     assert.equal(inventory.seats, 0)
+  })
+})
+
+test('booking rejects a missing or invalid Trip.basePrice before reserving seats', async () => {
+  const inventory = makeSeatInventory(2)
+  inventory.methods.Trip.findOne = async () => ({ _id: 'trip-a', basePrice: Number.NaN })
+  await withOverrides(inventoryOverrides(inventory), async () => {
+    const result = await invoke(createBooking, request({ key: 'invalid-trip-price' }))
+    assert.equal(result.error?.statusCode, 409)
+    assert.equal(inventory.seats, 2)
+    assert.equal(inventory.bookings.length, 0)
   })
 })
 
@@ -295,10 +307,11 @@ test('webhook verification selects the Live webhook secret while retaining the s
 
 test('payment order returns the active mode public Key ID for Checkout', async () => {
   const booking = {
-    _id: '64b000000000000000000030', user: 'customer-a', status: 'pending', paymentStatus: 'pending',
-    totalAmount: 250, razorpayOrderId: null,
+    _id: '64b000000000000000000030', user: 'customer-a', trip: 'trip-a', status: 'pending', paymentStatus: 'pending',
+    numberOfSeats: 1, pricePerSeat: 250, totalAmount: 250, razorpayOrderId: null,
   }
   await withOverrides([
+    { model: Trip, methods: { async findById() { return { _id: 'trip-a', basePrice: 250 } } } },
     { model: Booking, methods: {
       async findOne() { return booking },
       async findOneAndUpdate(_filter, update) {
@@ -318,13 +331,57 @@ test('payment order returns the active mode public Key ID for Checkout', async (
   })
 })
 
+test('Razorpay order uses the stored Trip.basePrice snapshot multiplied by travellers', async () => {
+  const booking = {
+    _id: '64b000000000000000000041', user: 'customer-a', trip: 'trip-a', status: 'pending', paymentStatus: 'pending',
+    numberOfSeats: 2, pricePerSeat: 900, totalAmount: 1800, razorpayOrderId: null,
+  }
+  let submittedAmount
+  await withOverrides([
+    { model: Trip, methods: { async findById() { return { _id: 'trip-a', basePrice: 900 } } } },
+    { model: Booking, methods: {
+      async findOne() { return booking },
+      async findOneAndUpdate(_filter, update) {
+        if (update.$set.razorpayOrderId) booking.razorpayOrderId = update.$set.razorpayOrderId
+        return booking
+      },
+      async updateOne() { return { matchedCount: 1 } },
+    } },
+    { model: razorpay, methods: { orders: { async create({ amount, currency }) { submittedAmount = amount; return { id: 'order-base-price', amount, currency } } } } },
+  ], async () => {
+    const result = await invoke(createPaymentOrder, { params: { bookingId: booking._id }, user: { _id: 'customer-a' } })
+    assert.equal(result.statusCode, 200)
+    assert.equal(submittedAmount, 180000)
+    assert.equal(result.body.data.amount, 180000)
+  })
+})
+
+test('payment order refuses an outdated pending booking price without changing its stored snapshot', async () => {
+  const booking = {
+    _id: '64b000000000000000000042', user: 'customer-a', trip: 'trip-a', status: 'pending', paymentStatus: 'pending',
+    numberOfSeats: 2, pricePerSeat: 250, totalAmount: 500, razorpayOrderId: null,
+  }
+  let providerCalled = false
+  await withOverrides([
+    { model: Trip, methods: { async findById() { return { _id: 'trip-a', basePrice: 900 } } } },
+    { model: Booking, methods: { async findOne() { return booking } } },
+    { model: razorpay, methods: { orders: { async create() { providerCalled = true } } } },
+  ], async () => {
+    const result = await invoke(createPaymentOrder, { params: { bookingId: booking._id }, user: { _id: 'customer-a' } })
+    assert.equal(result.error?.statusCode, 409)
+    assert.equal(providerCalled, false)
+    assert.equal(booking.totalAmount, 500)
+  })
+})
+
 test('payment provider order errors return a safe 502 and sanitized request diagnostics', async () => {
-  const booking = { _id: '64b000000000000000000039', user: 'customer-a', status: 'pending', paymentStatus: 'pending', totalAmount: 250, razorpayOrderId: null }
+  const booking = { _id: '64b000000000000000000039', user: 'customer-a', trip: 'trip-a', numberOfSeats: 1, pricePerSeat: 250, status: 'pending', paymentStatus: 'pending', totalAmount: 250, razorpayOrderId: null }
   const originalConsoleError = console.error
   const logs = []
   console.error = (...args) => logs.push(args.join(' '))
   try {
     await withOverrides([
+      { model: Trip, methods: { async findById() { return { _id: 'trip-a', basePrice: 250 } } } },
       { model: Booking, methods: {
         async findOne() { return booking },
         async findOneAndUpdate() { return booking },

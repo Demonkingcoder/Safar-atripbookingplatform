@@ -82,7 +82,7 @@ function MyBookings() {
                     : ''
       const seats = booking.numberOfSeats ?? booking.numberOfTravellers ?? booking.travellers ?? booking.guests ?? 1
       const date = departure?.startDate || departure?.departureDate || booking.startDate
-      const price = booking.totalPrice ?? booking.totalAmount ?? booking.amount
+      const price = booking.totalAmount
       const canCancel = booking.status === 'pending' && paymentStatus === 'pending'
       return <article key={id} className="panel">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start"><div><p className="eyebrow">{t('bookingHistory.reference')}</p><p className="mt-1 break-all text-xs font-semibold text-muted">{booking.bookingReference || booking.bookingId || id || t('bookingHistory.pendingReference')}</p><h2 className="mt-3 font-heading text-2xl font-semibold text-forest">{title}</h2></div><span className={`status-pill ${String(booking.status).toLowerCase() === 'confirmed' ? 'status-pill-success' : ''}`}>{status || statusKey.replaceAll('_', ' ')}</span></div>

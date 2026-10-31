@@ -1,33 +1,16 @@
 
 import Trip from "../models/Trip.js";
-import Departure from "../models/Departure.js";
 import { ApiResponse } from "../utils/api-response.js";
 import { ApiError } from "../utils/api-error.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 const withStartingPrices = async (trips) => {
-  if (!trips.length) return trips;
-  const now = new Date();
-  const departures = await Departure.find({
-    trip: { $in: trips.map((trip) => trip._id) },
-    status: "scheduled",
-    startDate: { $gt: now },
-    availableSeats: { $gt: 0 },
-  }).select("trip price").sort({ price: 1 }).lean();
-  const prices = new Map();
-  for (const departure of departures) {
-    const key = String(departure.trip);
-    if (!prices.has(key)) prices.set(key, { price: departure.price, date: departure.startDate });
-  }
-  return trips.map((trip) => {
-    const departure = prices.get(String(trip._id));
-    return {
-      ...trip,
-      startingPrice: departure?.price ?? trip.basePrice,
-      startingPriceSource: departure === undefined ? "basePrice" : "departure",
-      startingDepartureDate: departure?.date ?? null,
-    };
-  });
+  return trips.map((trip) => ({
+    ...trip,
+    startingPrice: trip.basePrice,
+    startingPriceSource: "basePrice",
+    startingDepartureDate: null,
+  }));
 };
 
 // GET /api/v1/trips

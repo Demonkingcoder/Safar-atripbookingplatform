@@ -25,6 +25,7 @@ const departureSchema = new mongoose.Schema(
       },
     },
 
+    // Legacy/admin field only. Customer payable pricing is authoritative on Trip.basePrice.
     price: {
       type: Number,
       required: [true, "Departure price is required"],

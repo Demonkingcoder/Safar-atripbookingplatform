@@ -108,14 +108,16 @@ function Booking() {
   }, [slug])
 
   const selected = useMemo(() => departures.find((item) => (item._id || item.id) === departureId), [departures, departureId])
-  const price = selected?.price ?? 0
-  const total = Number(price || 0) * Number(travellers)
+  const price = trip?.basePrice
+  const hasValidPrice = typeof price === 'number' && Number.isFinite(price) && price >= 0
+  const total = hasValidPrice ? price * Number(travellers) : null
 
   async function handleSubmit(event) {
     event.preventDefault()
     if (submitLockRef.current || paymentWindowOpen || checkingPayment || paymentUncertain) return
     setError('')
     if (!departureId) { setError(t('booking.chooseValidDeparture')); return }
+    if (!hasValidPrice || !Number.isFinite(total)) { setError('Trip pricing is currently unavailable. Please contact Safar support.'); return }
     const travellerCount = Number(travellers)
     const availableSeats = Number(selected?.availableSeats ?? selected?.seatsAvailable)
     if (!Number.isInteger(travellerCount) || travellerCount < 1 || travellerCount > 10) {
@@ -240,7 +242,7 @@ function Booking() {
         {pendingBooking && <Button type="button" variant="outline" className="w-full" loading={cancelling} disabled={submitting || paymentWindowOpen || checkingPayment} onClick={cancelPendingBooking}>{t('booking.cancelPending')}</Button>}
         <p className="flex items-start gap-2 text-xs leading-5 text-muted"><ShieldCheck size={16} className="mt-0.5 shrink-0 text-forest" />{t('booking.reserved')}</p>
       </form>
-      <aside className="panel h-fit bg-forest text-white"><p className="text-xs font-bold uppercase tracking-[0.18em] text-terracotta-light">{t('booking.summary')}</p><h2 className="mt-3 font-heading text-2xl font-semibold text-white">{trip?.translations?.[language]?.title || trip?.title || t('trip.nextAdventure')}</h2><div className="mt-6 border-b border-white/20 pb-4"><span className="text-sm text-white/80">{t('booking.departure')}</span><strong className="mt-1 block">{selected?.startDate ? formatDate(selected.startDate, {}, locale) : t('booking.chooseDepartureHint')}</strong>{selected?.endDate && <span className="mt-1 block text-xs text-white/75">{t('booking.through', { date: formatDate(selected.endDate, {}, locale) })}</span>}</div><div className="mt-4 flex items-center justify-between gap-3 border-b border-white/20 pb-4"><span className="text-sm text-white/80">{t('booking.travellers')}</span><strong>{travellers}</strong></div><div className="mt-4 flex items-center justify-between gap-3 border-b border-white/20 pb-4"><span className="text-sm text-white/80">{t('booking.pricePerTraveller')}</span><strong>{formatCurrency(price, 'INR', locale)}</strong></div><div className="mt-5 flex items-end justify-between gap-3"><span className="text-sm text-white/80">{t('booking.total')}</span><strong className="font-heading text-2xl text-white">{formatCurrency(total, 'INR', locale)}</strong></div><p className="mt-4 text-xs leading-5 text-white/70">{t('booking.paymentConfirm')}</p></aside>
+      <aside className="panel h-fit bg-forest text-white"><p className="text-xs font-bold uppercase tracking-[0.18em] text-terracotta-light">{t('booking.summary')}</p><h2 className="mt-3 font-heading text-2xl font-semibold text-white">{trip?.translations?.[language]?.title || trip?.title || t('trip.nextAdventure')}</h2><div className="mt-6 border-b border-white/20 pb-4"><span className="text-sm text-white/80">{t('booking.departure')}</span><strong className="mt-1 block">{selected?.startDate ? formatDate(selected.startDate, {}, locale) : t('booking.chooseDepartureHint')}</strong>{selected?.endDate && <span className="mt-1 block text-xs text-white/75">{t('booking.through', { date: formatDate(selected.endDate, {}, locale) })}</span>}</div><div className="mt-4 flex items-center justify-between gap-3 border-b border-white/20 pb-4"><span className="text-sm text-white/80">{t('booking.travellers')}</span><strong>{travellers}</strong></div><div className="mt-4 flex items-center justify-between gap-3 border-b border-white/20 pb-4"><span className="text-sm text-white/80">{t('booking.pricePerTraveller')}</span><strong>{hasValidPrice ? formatCurrency(price, 'INR', locale) : t('trip.pricing')}</strong></div><div className="mt-5 flex items-end justify-between gap-3"><span className="text-sm text-white/80">{t('booking.total')}</span><strong className="font-heading text-2xl text-white">{total != null && Number.isFinite(total) ? formatCurrency(total, 'INR', locale) : t('trip.pricing')}</strong></div><p className="mt-4 text-xs leading-5 text-white/70">{t('booking.paymentConfirm')}</p></aside>
     </div>
   </div></main>
 }

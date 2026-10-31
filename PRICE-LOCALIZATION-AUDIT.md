@@ -2,10 +2,11 @@
 
 ## Fare source of truth
 
-- `Departure.price` is the full per-traveller fare for that scheduled departure.
-- The trip listing API now returns `startingPrice` from the lowest future `scheduled` departure with seats available. It also returns `startingDepartureDate` and `startingPriceSource: "departure"`.
-- If no bookable future departure exists, the API returns the trip's existing `basePrice` with `startingPriceSource: "basePrice"`. The UI labels this as a listed base price and asks the customer to confirm the full fare against a scheduled departure; it does not call this an advance.
-- Booking creation still snapshots the selected departure's price into `pricePerSeat` and calculates `totalAmount` on the server. Razorpay continues to receive the stored booking total in paise. Historical booking amounts are never rewritten.
+- `Trip.basePrice` is the authoritative full payable price per traveller. `Departure.price` is retained for legacy/admin data only and is not used for customer pricing or payment.
+- Trip listing, trip details, and the booking summary display `Trip.basePrice` per traveller.
+- Booking creation validates the selected departure's associated published Trip, snapshots `Trip.basePrice` into `Booking.pricePerSeat`, and calculates `Booking.totalAmount` on the server. The booking's trip reference comes from `Departure.trip`.
+- Razorpay receives the stored booking total converted to paise (INR). Payment verification, webhook validation, receipts, and notifications continue to use the immutable booking amount snapshot. Existing bookings are never repriced.
+- A pending booking whose stored snapshot differs from the current `Trip.basePrice` is blocked from getting a new payment order and requires manual review/recreation or reconciliation. The diagnostic below identifies these records without modifying them.
 - No advance-payment fields exist in the current model. No advance or balance is displayed.
 
 ## Optional Hindi trip content
@@ -20,7 +21,19 @@ The diagnostic requires the existing `MONGO_URI` to be injected securely by the 
 npm run diagnose:booking-price -- SAF-BOOKING-REFERENCE
 ```
 
-For a production investigation, inject the production URI through the approved secret manager or an authorized secure shell environment. Review output before sharing it. This implementation was not run against production data, and it does not correct inconsistent historical records.
+To find pending bookings whose stored snapshot no longer matches the current Trip price, run:
+
+```powershell
+node src/scripts/diagnose-booking-price.js --pending-mismatches
+```
+
+To verify a production Trip document by its ObjectId or slug without reading booking/customer records:
+
+```powershell
+node src/scripts/diagnose-booking-price.js --trip 6ae2c8864486dd0d345c80d4
+```
+
+For a production investigation, inject the production URI through the approved secret manager or an authorized secure shell environment. Review output before sharing it. The diagnostic is read-only and does not correct inconsistent historical records. Review each affected pending booking with payment/order status and either safely cancel/recreate it or reconcile an existing payment with the provider; never overwrite its amount snapshot.
 
 ## English and Hindi
 

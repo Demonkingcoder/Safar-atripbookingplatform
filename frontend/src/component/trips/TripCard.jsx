@@ -32,7 +32,7 @@ function TripCard({ trip, entranceDelay = 0, className = '' }) {
   if (!trip) return null
   const slug = trip.slug || trip._id || trip.id
   const image = Array.isArray(trip.images) ? trip.images[0] : trip.images || trip.coverImage || trip.image
-  const price = trip.startingPrice ?? trip.price ?? trip.basePrice ?? trip.pricing?.pricePerPerson ?? trip.pricing?.basePrice ?? (typeof trip.pricing === 'number' ? trip.pricing : undefined)
+  const price = trip.basePrice
   const title = trip.translations?.[language]?.title || trip.title
   const description = trip.translations?.[language]?.description || trip.description
   const destination = trip.translations?.[language]?.destination || trip.destination || trip.location || trip.category
@@ -75,7 +75,7 @@ function TripCard({ trip, entranceDelay = 0, className = '' }) {
       <h3 className="mt-3 font-heading text-2xl font-semibold tracking-[-0.02em] text-forest"><Link to={slug ? `/trips/${slug}` : '/trips'} className="transition-colors hover:text-terracotta-dark">{title || t('trip.nextAdventure')}</Link></h3>
       <p className="mt-3 min-h-[3rem] text-sm leading-6 text-charcoal/75">{description || t('trip.pageDescription')}</p>
       <div className="mt-5 flex items-end justify-between gap-3 border-t border-forest/10 pt-4">
-        <div><p className="text-xs font-medium text-charcoal/65">{trip.startingPriceSource === 'basePrice' ? t('trip.baseLabel') : t('trip.starting')}</p><p className="mt-1 text-lg font-bold text-forest">{price != null ? formatCurrency(price, 'INR', locale) : t('trip.pricing')}</p><p className="text-xs text-charcoal-light">{trip.startingPriceSource === 'basePrice' ? t('trip.baseHint') : t('trip.perTraveller')}</p></div>
+        <div><p className="text-xs font-medium text-charcoal/65">{t('trip.fullPrice')}</p><p className="mt-1 text-lg font-bold text-forest">{price != null ? formatCurrency(price, 'INR', locale) : t('trip.pricing')}</p><p className="text-xs text-charcoal-light">{t('trip.perTraveller')}</p></div>
         <Link to={slug ? `/trips/${slug}` : '/trips'} className="inline-flex items-center gap-2 rounded-full bg-forest px-4 py-2.5 text-sm font-bold text-white transition hover:bg-forest-dark focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-forest-light">{t('trip.view')} <ArrowUpRight size={16} /></Link>
       </div>
     </div>
