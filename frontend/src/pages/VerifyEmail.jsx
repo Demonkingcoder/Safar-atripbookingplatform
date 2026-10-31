@@ -3,13 +3,14 @@ import { Link, useParams } from 'react-router-dom'
 import { Compass } from 'lucide-react'
 import authService from '../services/authService'
 import Button from '../component/ui/Button'
-import { getErrorMessage } from '../services/api'
+import { useLanguage } from '../context/LanguageContext'
 
 function VerifyEmail() {
+  const { t } = useLanguage()
   const { token } = useParams()
   const verificationRequest = useRef(null)
   const [status, setStatus] = useState(token ? 'verifying' : 'error')
-  const [message, setMessage] = useState(token ? 'Verifying your email address…' : 'The verification link is missing its token.')
+  const [message, setMessage] = useState(token ? t('auth.verifyLoading') : t('auth.verifyFailure'))
   const [email, setEmail] = useState('')
   const [resending, setResending] = useState(false)
   const [resendMessage, setResendMessage] = useState('')
@@ -18,7 +19,7 @@ function VerifyEmail() {
   useEffect(() => {
     if (!token) {
       setStatus('error')
-      setMessage('The verification link is missing its token.')
+      setMessage(t('auth.verifyFailure'))
       return undefined
     }
 
@@ -31,18 +32,18 @@ function VerifyEmail() {
 
     let active = true
     setStatus('verifying')
-    setMessage('Verifying your email address…')
+    setMessage(t('auth.verifyLoading'))
 
     verificationRequest.current.promise
-      .then((response) => {
+      .then(() => {
         if (!active) return
         setStatus('verified')
-        setMessage(response?.message || 'Your email address has been verified.')
+        setMessage(t('auth.verifySuccess'))
       })
-      .catch((error) => {
+      .catch(() => {
         if (!active) return
         setStatus('error')
-        setMessage(getErrorMessage(error, 'We could not verify this email address.'))
+        setMessage(t('auth.verifyFailure'))
       })
 
     return () => { active = false }
@@ -55,10 +56,10 @@ function VerifyEmail() {
     setResending(true)
 
     try {
-      const response = await authService.resendVerificationEmail(email.trim().toLowerCase())
-      setResendMessage(response?.message || 'If the account exists and needs verification, a verification email will be sent.')
-    } catch (error) {
-      setResendError(getErrorMessage(error, 'We could not request a new verification email. Please try again.'))
+      await authService.resendVerificationEmail(email.trim().toLowerCase())
+      setResendMessage(t('auth.resendSuccess'))
+    } catch {
+      setResendError(t('auth.resendError'))
     } finally {
       setResending(false)
     }
@@ -72,20 +73,20 @@ function VerifyEmail() {
           <span className="font-heading text-2xl font-bold text-forest">safar<span className="text-terracotta">.</span></span>
         </Link>
 
-        <p className="eyebrow mt-8">Email verification</p>
+        <p className="eyebrow mt-8">{t('auth.verifyTitle')}</p>
         <h1 className="mt-3 font-heading text-4xl font-semibold text-forest">
-          {status === 'verified' ? 'You’re ready to explore.' : status === 'verifying' ? 'Verifying your email.' : 'Verification needs attention.'}
+          {status === 'verified' ? t('auth.verifySuccess') : status === 'verifying' ? t('auth.verifyLoading') : t('auth.verifyTitle')}
         </h1>
         <p className="mt-3 text-sm leading-6 text-muted" role={status === 'error' ? 'alert' : 'status'}>
           {message}
         </p>
 
         {status === 'verified' ? (
-          <Link to="/login" className="button-primary mt-7">Continue to sign in</Link>
+          <Link to="/login" className="button-primary mt-7">{t('auth.continueSignIn')}</Link>
         ) : status === 'error' ? (
           <form onSubmit={handleResend} className="mt-7 space-y-4">
             <div className="field">
-              <label htmlFor="verification-email">Email address</label>
+              <label htmlFor="verification-email">{t('auth.email')}</label>
               <input
                 id="verification-email"
                 type="email"
@@ -99,13 +100,13 @@ function VerifyEmail() {
             {resendError && <p className="notice-error" role="alert">{resendError}</p>}
             {resendMessage && <p className="notice-success" role="status">{resendMessage}</p>}
             <Button type="submit" size="lg" className="w-full" loading={resending}>
-              Resend verification email
+              {t('auth.resend')}
             </Button>
           </form>
         ) : null}
 
         <p className="mt-6 text-center text-sm text-muted">
-          <Link to="/" className="font-bold text-forest underline underline-offset-4">Return to Safar</Link>
+          <Link to="/" className="font-bold text-forest underline underline-offset-4">{t('nav.home')}</Link>
         </p>
       </section>
     </main>

@@ -3,6 +3,8 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Menu, X, Compass, UserRound, LogOut, CalendarDays } from 'lucide-react'
 import { AnimatePresence, motion, useMotionValueEvent, useReducedMotion, useScroll } from 'motion/react'
 import { useAuth } from '../../context/AuthContext'
+import { useLanguage } from '../../context/LanguageContext'
+import LanguageSwitcher from './LanguageSwitcher'
 
 const linkClass = ({ isActive }) =>
   `rounded-full px-3 py-2 text-sm font-semibold transition-colors ${isActive ? 'bg-forest/10 text-forest' : 'text-charcoal hover:bg-forest/5 hover:text-forest'}`
@@ -16,6 +18,7 @@ function Navbar() {
   const reduceMotion = useReducedMotion()
   const [scrolled, setScrolled] = useState(false)
   const [activeSection, setActiveSection] = useState('')
+  const { t } = useLanguage()
   useMotionValueEvent(scrollY, 'change', (latest) => setScrolled(latest > 12))
   const closeMenu = () => setMenuOpen(false)
 
@@ -70,31 +73,34 @@ function Navbar() {
         </Link>
 
         <div className="hidden items-center gap-1 lg:flex">
-          <NavLink to="/trips" className={({ isActive }) => `${linkClass({ isActive })} nav-section-link ${isActive || activeSection === 'trips' ? 'is-active' : ''}`}>Explore trips</NavLink>
-          <a href={location.pathname === '/' ? '#why-safar' : '/#why-safar'} className={sectionLink('why-safar')}>Why Safar</a>
-          <a href={location.pathname === '/' ? '#footer' : '/#footer'} className={sectionLink('footer')}>Contact</a>
+          <NavLink to="/trips" className={({ isActive }) => `${linkClass({ isActive })} nav-section-link ${isActive || activeSection === 'trips' ? 'is-active' : ''}`}>{t('nav.explore')}</NavLink>
+          <a href={location.pathname === '/' ? '#why-safar' : '/#why-safar'} className={sectionLink('why-safar')}>{t('nav.why')}</a>
+          <a href={location.pathname === '/' ? '#footer' : '/#footer'} className={sectionLink('footer')}>{t('nav.contact')}</a>
         </div>
 
         <div className="hidden items-center gap-2 md:flex">
           {loading ? <span className="h-10 w-10" aria-hidden="true" /> : isAuthenticated ? (
             user?.role === 'admin' ? <>
-              <Link to="/" className="rounded-full px-3 py-2 text-sm font-semibold text-charcoal hover:bg-forest/5">Home</Link>
-              <Link to="/profile" className="inline-flex items-center gap-2 rounded-full border border-forest/15 bg-white px-3 py-2 text-sm font-semibold text-forest hover:border-forest/35"><UserRound size={17} /> {user?.fullName?.split(' ')[0] || 'Account'}</Link>
-              <button onClick={handleLogout} type="button" title="Log out" aria-label="Log out" className="inline-flex h-10 w-10 items-center justify-center rounded-full text-charcoal hover:bg-red-50 hover:text-red-700"><LogOut size={17} /></button>
+              <Link to="/" className="rounded-full px-3 py-2 text-sm font-semibold text-charcoal hover:bg-forest/5">{t('nav.home')}</Link>
+              <Link to="/profile" className="inline-flex items-center gap-2 rounded-full border border-forest/15 bg-white px-3 py-2 text-sm font-semibold text-forest hover:border-forest/35"><UserRound size={17} /> {user?.fullName?.split(' ')[0] || t('nav.account')}</Link>
+              <button onClick={handleLogout} type="button" title={t('nav.logout')} aria-label={t('nav.logout')} className="inline-flex h-10 w-10 items-center justify-center rounded-full text-charcoal hover:bg-red-50 hover:text-red-700"><LogOut size={17} /></button>
             </> : <>
-              <Link to="/my-bookings" className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold text-charcoal hover:bg-forest/5"><CalendarDays size={17} /> My bookings</Link>
-              <Link to="/profile" className="inline-flex items-center gap-2 rounded-full border border-forest/15 bg-white px-3 py-2 text-sm font-semibold text-forest hover:border-forest/35"><UserRound size={17} /> {user?.fullName?.split(' ')[0] || user?.name?.split(' ')[0] || 'Account'}</Link>
-              <button onClick={handleLogout} type="button" title="Log out" aria-label="Log out" className="inline-flex h-10 w-10 items-center justify-center rounded-full text-charcoal hover:bg-red-50 hover:text-red-700"><LogOut size={17} /></button>
+              <Link to="/my-bookings" className="inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold text-charcoal hover:bg-forest/5"><CalendarDays size={17} /> {t('nav.bookings')}</Link>
+              <Link to="/profile" className="inline-flex items-center gap-2 rounded-full border border-forest/15 bg-white px-3 py-2 text-sm font-semibold text-forest hover:border-forest/35"><UserRound size={17} /> {user?.fullName?.split(' ')[0] || user?.name?.split(' ')[0] || t('nav.account')}</Link>
+              <button onClick={handleLogout} type="button" title={t('nav.logout')} aria-label={t('nav.logout')} className="inline-flex h-10 w-10 items-center justify-center rounded-full text-charcoal hover:bg-red-50 hover:text-red-700"><LogOut size={17} /></button>
             </>
           ) : (
             <>
-              <Link to="/login" className="rounded-full px-4 py-2.5 text-sm font-semibold text-forest transition-colors hover:bg-forest/5">Log in</Link>
-              <Link to="/register" className="inline-flex items-center justify-center rounded-full bg-forest px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-forest-dark focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-forest-light">Create account <span className="ml-2" aria-hidden="true">↗</span></Link>
+              <Link to="/login" className="rounded-full px-4 py-2.5 text-sm font-semibold text-forest transition-colors hover:bg-forest/5">{t('nav.login')}</Link>
+              <Link to="/register" className="inline-flex items-center justify-center rounded-full bg-forest px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-forest-dark focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-forest-light">{t('nav.create')} <span className="ml-2" aria-hidden="true">↗</span></Link>
             </>
           )}
         </div>
 
-        <button type="button" className="flex h-10 w-10 items-center justify-center rounded-xl border border-forest/20 bg-white text-forest lg:hidden" aria-label={menuOpen ? 'Close navigation menu' : 'Open navigation menu'} aria-expanded={menuOpen} aria-controls="mobile-navigation" onClick={() => setMenuOpen((open) => !open)}>
+        <div className="hidden lg:block"><LanguageSwitcher /></div>
+
+        <div className="ml-auto lg:hidden"><LanguageSwitcher /></div>
+        <button type="button" className="flex h-10 w-10 items-center justify-center rounded-xl border border-forest/20 bg-white text-forest lg:hidden" aria-label={menuOpen ? t('nav.menuClose') : t('nav.menuOpen')} aria-expanded={menuOpen} aria-controls="mobile-navigation" onClick={() => setMenuOpen((open) => !open)}>
           {menuOpen ? <X size={21} /> : <Menu size={21} />}
         </button>
       </nav>
@@ -102,20 +108,20 @@ function Navbar() {
       <AnimatePresence initial={false}>
       {menuOpen && <motion.div id="mobile-navigation" initial={reduceMotion ? false : { opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={reduceMotion ? undefined : { opacity: 0, height: 0 }} transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }} className="overflow-hidden border-t border-forest/10 bg-ivory px-4 py-4 shadow-lg lg:hidden">
         <div className="mx-auto flex max-w-7xl flex-col gap-1">
-          <NavLink to="/trips" onClick={closeMenu} className={linkClass}>Explore trips</NavLink>
-          <a href="/#why-safar" onClick={closeMenu} className="rounded-full px-3 py-2.5 text-sm font-semibold text-charcoal hover:bg-forest/5">Why Safar</a>
-          <a href="/#footer" onClick={closeMenu} className="rounded-full px-3 py-2.5 text-sm font-semibold text-charcoal hover:bg-forest/5">Contact</a>
+          <NavLink to="/trips" onClick={closeMenu} className={linkClass}>{t('nav.explore')}</NavLink>
+          <a href="/#why-safar" onClick={closeMenu} className="rounded-full px-3 py-2.5 text-sm font-semibold text-charcoal hover:bg-forest/5">{t('nav.why')}</a>
+          <a href="/#footer" onClick={closeMenu} className="rounded-full px-3 py-2.5 text-sm font-semibold text-charcoal hover:bg-forest/5">{t('nav.contact')}</a>
           {loading ? null : isAuthenticated ? user?.role === 'admin' ? <>
-            <NavLink to="/" onClick={closeMenu} className={linkClass}>Home</NavLink>
-            <NavLink to="/profile" onClick={closeMenu} className={linkClass}>My profile</NavLink>
-            <button type="button" onClick={handleLogout} className="mt-2 inline-flex items-center justify-center gap-2 rounded-full border border-red-200 px-4 py-3 text-sm font-semibold text-red-700"><LogOut size={17} /> Log out</button>
+            <NavLink to="/" onClick={closeMenu} className={linkClass}>{t('nav.home')}</NavLink>
+            <NavLink to="/profile" onClick={closeMenu} className={linkClass}>{t('nav.profile')}</NavLink>
+            <button type="button" onClick={handleLogout} className="mt-2 inline-flex items-center justify-center gap-2 rounded-full border border-red-200 px-4 py-3 text-sm font-semibold text-red-700"><LogOut size={17} /> {t('nav.logout')}</button>
           </> : <>
-            <NavLink to="/my-bookings" onClick={closeMenu} className={(state) => `${linkClass(state)} md:hidden`}>My bookings</NavLink>
-            <NavLink to="/profile" onClick={closeMenu} className={(state) => `${linkClass(state)} md:hidden`}>My profile</NavLink>
-            <button type="button" onClick={handleLogout} className="mt-2 inline-flex items-center justify-center gap-2 rounded-full border border-red-200 px-4 py-3 text-sm font-semibold text-red-700 md:hidden"><LogOut size={17} /> Log out</button>
+            <NavLink to="/my-bookings" onClick={closeMenu} className={(state) => `${linkClass(state)} md:hidden`}>{t('nav.bookings')}</NavLink>
+            <NavLink to="/profile" onClick={closeMenu} className={(state) => `${linkClass(state)} md:hidden`}>{t('nav.profile')}</NavLink>
+            <button type="button" onClick={handleLogout} className="mt-2 inline-flex items-center justify-center gap-2 rounded-full border border-red-200 px-4 py-3 text-sm font-semibold text-red-700 md:hidden"><LogOut size={17} /> {t('nav.logout')}</button>
           </> : <div className="mt-3 grid grid-cols-2 gap-2 md:hidden">
-            <Link to="/login" onClick={closeMenu} className="rounded-full border border-forest/20 bg-white px-4 py-3 text-center text-sm font-semibold text-forest">Log in</Link>
-            <Link to="/register" onClick={closeMenu} className="rounded-full bg-forest px-4 py-3 text-center text-sm font-bold text-white">Create account</Link>
+            <Link to="/login" onClick={closeMenu} className="rounded-full border border-forest/20 bg-white px-4 py-3 text-center text-sm font-semibold text-forest">{t('nav.login')}</Link>
+            <Link to="/register" onClick={closeMenu} className="rounded-full bg-forest px-4 py-3 text-center text-sm font-bold text-white">{t('nav.create')}</Link>
           </div>}
         </div>
       </motion.div>}

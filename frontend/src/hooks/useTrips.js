@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import tripService from '../services/tripService'
-import { getErrorMessage } from '../services/api'
+import { useLanguage } from '../context/LanguageContext'
 
 function useTrips() {
+  const { t } = useLanguage()
   const [trips, setTrips] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -14,11 +15,11 @@ function useTrips() {
       const list = await tripService.getTrips()
       setTrips(Array.isArray(list) ? list : [])
     } catch (err) {
-      setError(getErrorMessage(err, 'Unable to load trips. Please try again.'))
+      setError(!err?.response ? t('common.network') : err.response.status >= 500 ? t('common.serverError') : t('common.error'))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => { fetchTrips() }, [fetchTrips])
 

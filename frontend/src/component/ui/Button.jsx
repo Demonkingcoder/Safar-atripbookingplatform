@@ -1,6 +1,8 @@
 import { motion, useReducedMotion } from 'motion/react'
+import { useLanguage } from '../../context/LanguageContext'
 
 function Button({ children, variant = 'primary', size = 'md', type = 'button', disabled = false, loading = false, className = '', onClick }) {
+  const { t } = useLanguage()
   const reduceMotion = useReducedMotion()
   const supportsHover = typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches
   const base = 'inline-flex items-center justify-center gap-2 rounded-full font-bold transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-forest-light disabled:cursor-not-allowed disabled:bg-charcoal-light disabled:text-white disabled:shadow-none'
@@ -21,7 +23,7 @@ function Button({ children, variant = 'primary', size = 'md', type = 'button', d
     className={`${base} ${variants[variant] || variants.primary} ${sizes[size] || sizes.md} ${className}`}
   >
     {loading && <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent" />}
-    {loading ? 'Please wait…' : children}
+    {loading ? t('common.wait') : children}
   </motion.button>
 }
 export default Button

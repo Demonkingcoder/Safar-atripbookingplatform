@@ -130,6 +130,20 @@ test('login issues expiring HttpOnly cookies and stores only a refresh-token has
   })
 })
 
+test('unverified login is identified by a stable response code without creating a session', async () => {
+  const user = { ...makeUser(), isEmailVerified: false }
+  let sessionCreated = false
+  await withOverrides([
+    { model: User, methods: { async findOne() { return user } } },
+    { model: RefreshSession, methods: { async create() { sessionCreated = true; throw new Error('should not create a session') } } },
+  ], async () => {
+    const result = await invoke(login, { body: { email: user.email, password: 'correct-password' } })
+    assert.equal(result.error?.statusCode, 403)
+    assert.equal(result.error?.code, 'EMAIL_NOT_VERIFIED')
+    assert.equal(sessionCreated, false)
+  })
+})
+
 test('refresh rotates the token; reuse of a rotated token revokes its session family', async () => {
   const user = makeUser()
   const sessionId = '64b000000000000000000011'

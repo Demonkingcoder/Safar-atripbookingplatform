@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { Compass, Mail, ArrowUpRight } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
+import { useLanguage } from '../../context/LanguageContext'
 
 const footerGroups = [
   { heading: 'Discover', links: [{ label: 'All trips', to: '/trips' }, { label: 'My bookings', to: '/my-bookings' }] },
@@ -8,6 +9,7 @@ const footerGroups = [
 ]
 
 function Footer() {
+  const { t } = useLanguage()
   const reduceMotion = useReducedMotion()
   return (
     <motion.footer id="footer" className="bg-forest text-ivory" initial={reduceMotion ? false : { opacity: 0, y: 22 }} whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.12 }} transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}>
@@ -18,17 +20,17 @@ function Footer() {
               <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-ivory text-forest"><Compass size={22} /></span>
               <span className="font-heading text-3xl font-bold">safar<span className="text-terracotta-light">.</span></span>
             </Link>
-            <p className="mt-5 max-w-sm text-sm leading-7 text-white/80">Thoughtfully chosen journeys, meaningful discoveries, and memories that travel home with you.</p>
+            <p className="mt-5 max-w-sm text-sm leading-7 text-white/80">{t('footer.tagline')}</p>
             <a href="mailto:hello@safar.travel" className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-white underline decoration-terracotta-light underline-offset-4 hover:text-terracotta-light"><Mail size={16} /> hello@safar.travel <ArrowUpRight size={15} /></a>
           </motion.div>
           {footerGroups.map((group) => <motion.div key={group.heading} initial={reduceMotion ? false : { opacity: 0, y: 14 }} whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ duration: 0.45 }}>
-            <h2 className="mb-4 text-xs font-bold uppercase tracking-[0.18em] text-terracotta-light">{group.heading}</h2>
-            <ul className="space-y-3">{group.links.map((link) => <li key={link.to}><Link to={link.to} className="text-sm font-medium text-white/85 transition hover:text-white hover:underline hover:underline-offset-4">{link.label}</Link></li>)}</ul>
+            <h2 className="mb-4 text-xs font-bold uppercase tracking-[0.18em] text-terracotta-light">{group.heading === 'Discover' ? t('footer.discover') : t('footer.account')}</h2>
+            <ul className="space-y-3">{group.links.map((link) => <li key={link.to}><Link to={link.to} className="text-sm font-medium text-white/85 transition hover:text-white hover:underline hover:underline-offset-4">{link.label === 'All trips' ? t('footer.allTrips') : link.label === 'My bookings' ? t('nav.bookings') : link.label === 'Log in' ? t('nav.login') : link.label === 'Create account' ? t('nav.create') : t('nav.profile')}</Link></li>)}</ul>
           </motion.div>)}
         </motion.div>
         <div className="mt-12 flex flex-col gap-3 border-t border-white/20 pt-5 text-xs font-medium text-white/75 sm:flex-row sm:items-center sm:justify-between">
-          <p>© {new Date().getFullYear()} Safar. All rights reserved.</p>
-          <p>Made for the love of exploring.</p>
+          <p>© {new Date().getFullYear()} Safar. {t('footer.rights')}</p>
+          <p>{t('footer.made')}</p>
         </div>
       </div>
     </motion.footer>

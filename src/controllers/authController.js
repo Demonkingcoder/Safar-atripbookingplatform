@@ -255,7 +255,7 @@ export const login = asyncHandler(async (req, res) => {
     if (!user) throw new ApiError(401, "Invalid email or password");
     if (!user.isActive) throw new ApiError(403, "Your account is disabled");
     if (!(await user.isPasswordCorrect(password))) throw new ApiError(401, "Invalid email or password");
-    if (!user.isEmailVerified) throw new ApiError(403, "Please verify your email before logging in");
+    if (!user.isEmailVerified) throw new ApiError(403, "Please verify your email before logging in", [], "", "EMAIL_NOT_VERIFIED");
 
     const tokens = await createRefreshSession(user);
     // Clear only the legacy per-user refresh token; other new per-device sessions remain active.
@@ -394,7 +394,7 @@ export const resendVerificationEmail = asyncHandler(async (req, res) => {
         );
     }
 
-    // Rotate the persisted token only after SMTP accepts the recipient. A failed
+    // Rotate the persisted token only after Brevo accepts the recipient. A failed
     // resend therefore leaves the previously stored verification link usable.
     user.emailVerificationToken = hashedToken;
     user.emailVerificationExpiry = expiry;

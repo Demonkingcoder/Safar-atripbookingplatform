@@ -4,10 +4,11 @@ import { Compass, Eye, EyeOff } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import Button from '../component/ui/Button'
 import authService from '../services/authService'
-import { getErrorMessage } from '../services/api'
 import { getAuthenticatedLandingPath } from '../utils/authNavigation'
+import { useLanguage } from '../context/LanguageContext'
 
 function Login() {
+  const { t } = useLanguage()
   const { login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -33,16 +34,15 @@ function Login() {
       const destination = getAuthenticatedLandingPath(loggedInUser)
       navigate(destination, { replace: true })
     } catch (err) {
-      const responseMessage = err?.response?.data?.message || ''
-      if (err?.response?.status === 403 && /verify.*email/i.test(responseMessage)) {
+      if (err?.response?.data?.code === 'EMAIL_NOT_VERIFIED') {
         setVerificationRequired(true)
-        setError('Please verify your email address before continuing.')
+        setError(t('auth.verify'))
       } else if (!err?.response) {
-        setError('We could not reach the server. Check your connection and try again.')
+        setError(t('auth.network'))
       } else if (err.response.status >= 500) {
-        setError('The server could not complete sign in. Please try again shortly.')
+        setError(t('auth.server'))
       } else {
-        setError(getErrorMessage(err, 'Unable to sign in. Check your email and password.'))
+        setError(t('auth.loginError'))
       }
     } finally {
       setLoading(false)
@@ -55,14 +55,14 @@ function Login() {
     setResendMessage('')
     try {
       await authService.resendVerificationEmail(form.email.trim().toLowerCase())
-      setResendMessage('If this email belongs to an account that still needs verification, a verification email will be sent. Check your inbox and spam folder. If you have already verified your email, please sign in again.')
+      setResendMessage(t('auth.resendSuccess'))
     } catch (err) {
       if (!err?.response) {
-        setResendError('We could not reach the server. Check your connection and try again.')
+        setResendError(t('auth.network'))
       } else if (err.response.status >= 500) {
-        setResendError('We could not send the verification email right now. Please try again later.')
+        setResendError(t('auth.resendError'))
       } else {
-        setResendError(getErrorMessage(err, 'Unable to resend the verification email. Please try again.'))
+        setResendError(t('auth.resendError'))
       }
     } finally {
       setResending(false)
@@ -72,23 +72,23 @@ function Login() {
   return <main className="auth-page px-4 py-12 sm:px-6 sm:py-16">
     <section className="auth-card">
       <Link to="/" className="brand-lockup" aria-label="Safar home"><span className="brand-mark"><Compass size={22} /></span><span className="font-heading text-2xl font-bold text-forest">safar<span className="text-terracotta">.</span></span></Link>
-      <p className="eyebrow mt-8">Your next chapter awaits</p>
-      <h1 className="mt-3 font-heading text-4xl font-semibold text-forest">Welcome back.</h1>
-      <p className="mt-3 text-sm leading-6 text-muted">Sign in to manage your journeys and keep your plans in one place.</p>
+      <p className="eyebrow mt-8">{t('auth.loginEyebrow')}</p>
+      <h1 className="mt-3 font-heading text-4xl font-semibold text-forest">{t('auth.loginHeading')}</h1>
+      <p className="mt-3 text-sm leading-6 text-muted">{t('auth.loginIntro')}</p>
       {notice && <p className="notice-success mt-5" role="status">{notice}</p>}
       <form onSubmit={handleSubmit} className="mt-7 space-y-5">
-        <div className="field"><label htmlFor="login-email">Email address</label><input id="login-email" name="email" type="email" autoComplete="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="you@example.com" /></div>
-        <div className="field"><label htmlFor="login-password">Password</label><div className="password-wrap"><input id="login-password" name="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Enter your password" /><button type="button" onClick={() => setShowPassword((value) => !value)} className="password-toggle" aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></div>
-        <div className="-mt-2 text-right"><Link to="/forgot-password" className="text-sm font-semibold text-forest underline underline-offset-4">Forgot password?</Link></div>
+        <div className="field"><label htmlFor="login-email">{t('auth.email')}</label><input id="login-email" name="email" type="email" autoComplete="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="you@example.com" /></div>
+        <div className="field"><label htmlFor="login-password">{t('auth.password')}</label><div className="password-wrap"><input id="login-password" name="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder={t('auth.password')} /><button type="button" onClick={() => setShowPassword((value) => !value)} className="password-toggle" aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></div>
+        <div className="-mt-2 text-right"><Link to="/forgot-password" className="text-sm font-semibold text-forest underline underline-offset-4">{t('auth.forgot')}</Link></div>
         {error && <p role="alert" className="notice-error">{error}</p>}
-        <Button type="submit" size="lg" className="w-full" loading={loading}>Sign in <span aria-hidden="true">↗</span></Button>
+        <Button type="submit" size="lg" className="w-full" loading={loading}>{t('auth.signIn')} <span aria-hidden="true">↗</span></Button>
         {verificationRequired && <div className="space-y-3" aria-live="polite">
-          <Button type="button" variant="secondary" className="w-full" loading={resending} onClick={handleResendVerification}>Resend verification email</Button>
+          <Button type="button" variant="secondary" className="w-full" loading={resending} onClick={handleResendVerification}>{t('auth.resend')}</Button>
           {resendError && <p role="alert" className="notice-error">{resendError}</p>}
           {resendMessage && <p role="status" className="notice-success">{resendMessage}</p>}
         </div>}
       </form>
-      <p className="mt-6 text-center text-sm text-muted">New to Safar? <Link to="/register" className="font-bold text-forest underline decoration-terracotta underline-offset-4">Create an account</Link></p>
+      <p className="mt-6 text-center text-sm text-muted">{t('auth.newTo')} <Link to="/register" className="font-bold text-forest underline decoration-terracotta underline-offset-4">{t('auth.create')}</Link></p>
     </section>
   </main>
 }

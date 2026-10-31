@@ -1,11 +1,13 @@
 
 import Button from './Button'
+import { useLanguage } from '../../context/LanguageContext'
 
 function ErrorMessage({
-  message = 'Something went wrong. Please try again.',
+  message,
   onRetry,
-  title = 'Oops! Something went wrong',
+  title,
 }) {
+  const { t } = useLanguage()
   return (
     <div
       className="mx-auto w-full max-w-xl rounded-2xl border border-red-200 bg-white p-6 text-center sm:p-8"
@@ -16,17 +18,17 @@ function ErrorMessage({
       </div>
 
       <h2 className="mt-4 font-heading text-2xl font-semibold text-forest">
-        {title}
+          {title || t('common.errorTitle')}
       </h2>
 
       <p className="mt-3 text-sm leading-6 text-charcoal/65">
-        {message}
+        {message || t('common.error')}
       </p>
 
       {onRetry && (
         <div className="mt-6">
           <Button onClick={onRetry} variant="primary">
-            Try again
+          {t('common.retry')}
           </Button>
         </div>
       )}

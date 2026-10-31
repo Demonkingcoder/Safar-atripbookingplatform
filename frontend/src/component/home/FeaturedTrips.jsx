@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import TripCard from '../trips/TripCard';
 import Loader from '../ui/Loaders.jsx';
+import { useLanguage } from '../../context/LanguageContext'
 
 function FeaturedTrips({
   trips = [],
@@ -13,6 +14,7 @@ function FeaturedTrips({
   onRetry,
 }) {
   const reduceMotion = useReducedMotion()
+  const { t } = useLanguage()
   const carouselRef = useRef(null)
   const [activeIndex, setActiveIndex] = useState(0)
 
@@ -50,26 +52,26 @@ function FeaturedTrips({
         >
           <div>
             <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-terracotta-dark">
-              Your next adventure
+              {t('home.tripsEyebrow')}
             </p>
 
             <h2 className="font-heading text-4xl font-semibold tracking-[-0.03em] text-forest sm:text-5xl">
-              Journeys worth taking.
+              {t('home.tripsHeading')}
             </h2>
 
             <p className="mt-3 max-w-xl text-sm leading-7 text-charcoal/75 sm:mt-4 sm:text-base">
-              Discover memorable places and find the journey that speaks to you.
+              {t('home.tripsDescription')}
             </p>
           </div>
 
           <Link to="/trips" className="inline-flex w-fit items-center gap-2 rounded-full border border-forest/20 bg-white px-5 py-3 font-bold text-forest transition-colors hover:bg-forest hover:text-white">
-            Explore all trips <span aria-hidden="true">↗</span>
+            {t('home.allTrips')} <span aria-hidden="true">↗</span>
           </Link>
         </motion.div>
 
         {/* Loading state */}
         {loading && (
-          <Loader message="Finding your next adventure..." />
+          <Loader message={t('home.loading')} />
         )}
 
         {/* Error state */}
@@ -79,7 +81,7 @@ function FeaturedTrips({
             role="alert"
           >
             <p className="font-semibold text-charcoal">
-              We couldn't load the trips.
+              {t('home.loadError')}
             </p>
 
             <p className="mt-2 text-sm text-charcoal/65">
@@ -92,7 +94,7 @@ function FeaturedTrips({
                 onClick={onRetry}
                 className="mt-5 rounded-full bg-forest px-5 py-3 text-sm font-bold text-white hover:bg-forest-light"
               >
-                Try again
+                {t('home.retry')}
               </button>
             )}
           </div>
@@ -102,7 +104,7 @@ function FeaturedTrips({
         {!loading && !error && trips.length > 0 && (
           <div>
             <div className="mb-5 flex items-center justify-between gap-4">
-              <p className="text-sm font-medium text-charcoal-light">{activeIndex + 1} <span aria-hidden="true">/</span> {trips.length} journeys</p>
+              <p className="text-sm font-medium text-charcoal-light">{activeIndex + 1} <span aria-hidden="true">/</span> {trips.length} {t('trip.trips')}</p>
               <div className="flex gap-2">
                 <button type="button" onClick={() => goToSlide(Math.max(activeIndex - 1, 0))} disabled={activeIndex === 0} aria-label="Previous featured trip" className="carousel-arrow">
                   <ArrowLeft size={18} />
@@ -116,7 +118,7 @@ function FeaturedTrips({
               ref={carouselRef}
               className="featured-carousel no-scrollbar"
               role="region"
-              aria-label="Featured trips"
+              aria-label={t('home.tripsHeading')}
               aria-roledescription="carousel"
               tabIndex={0}
               onScroll={handleCarouselScroll}
@@ -147,12 +149,12 @@ function FeaturedTrips({
         {/* Empty state */}
         {!loading && !error && trips.length === 0 && (
           <div className="rounded-2xl border border-forest/10 bg-white px-6 py-14 text-center">
-            <p className="font-heading text-2xl font-semibold text-forest">
-              New adventures are on the way.
+              <p className="font-heading text-2xl font-semibold text-forest">
+              {t('home.emptyHeading')}
             </p>
 
             <p className="mt-3 text-sm text-charcoal/65">
-              There are no trips to display right now.
+              {t('trip.noTrips')}
             </p>
           </div>
         )}

@@ -1,7 +1,7 @@
-function Loader({
-  message = 'Preparing your journey...',
-  fullPage = false,
-}) {
+import { useLanguage } from '../../context/LanguageContext'
+
+function Loader({ message, fullPage = false }) {
+  const { t } = useLanguage()
   return (
     <div
       className={`flex flex-col items-center justify-center gap-4 ${
@@ -20,7 +20,7 @@ function Loader({
       </div>
 
       <p className="text-sm font-medium text-charcoal/65">
-        {message}
+        {message || t('common.loading')}
       </p>
     </div>
   )

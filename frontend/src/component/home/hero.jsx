@@ -3,8 +3,10 @@ import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring, u
 import { Check, MapPin, X } from 'lucide-react'
 import Button from '../ui/Button'
 import heroImage from '../../assets/images/safar-hero.webp'
+import { useLanguage } from '../../context/LanguageContext'
 
 function Hero({ onSearch, trips = [] }) {
+  const { t, language } = useLanguage()
   const supportsHover = typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches
   const [destination, setDestination] = useState('')
   const [selectedDestination, setSelectedDestination] = useState('')
@@ -21,14 +23,14 @@ function Hero({ onSearch, trips = [] }) {
   const suggestions = useMemo(() => {
     const unique = new Map()
     trips.forEach((trip) => {
-      const label = trip.destination || trip.location || trip.title || trip.name
+      const label = trip.translations?.[language]?.destination || trip.destination || trip.location || trip.translations?.[language]?.title || trip.title || trip.name
       if (label && !unique.has(String(label).trim())) unique.set(String(label).trim(), trip)
     })
     const query = destination.trim().toLowerCase()
     return [...unique.entries()]
-      .filter(([label, trip]) => !query || `${label} ${trip.title || ''} ${trip.description || ''}`.toLowerCase().includes(query))
+      .filter(([label, trip]) => !query || `${label} ${trip.translations?.[language]?.title || trip.title || ''} ${trip.translations?.[language]?.description || trip.description || ''}`.toLowerCase().includes(query))
       .slice(0, 5)
-  }, [trips, destination])
+  }, [trips, destination, language])
 
   function handleSubmit(event) {
     event.preventDefault()
@@ -61,7 +63,7 @@ function Hero({ onSearch, trips = [] }) {
     setSuggestionsOpen(false)
   }
 
-  const headlineWords = ['The', 'world', 'is', 'wide.']
+  const headlineWords = t('home.headlineFirst').split(' ')
 
   return (
     <section
@@ -93,11 +95,11 @@ function Hero({ onSearch, trips = [] }) {
             className="mb-5 inline-flex items-center gap-3 text-[0.68rem] font-bold uppercase tracking-[0.24em] text-terracotta-light sm:mb-6 sm:text-xs"
           >
             <span className="h-px w-8 bg-terracotta-light" />
-            Find your kind of extraordinary
+            {t('home.eyebrow')}
           </motion.p>
 
           <h1
-            aria-label="The world is wide. Go find yourself."
+            aria-label={`${t('home.headlineFirst')} ${t('home.headlineSecond')}`}
             className="max-w-4xl font-heading text-[clamp(2rem,7.5vw,6.25rem)] font-medium leading-[1.06] tracking-[-0.045em] text-[#FAF8F3]"
           >
             <span className="hero-headline-chip block w-fit bg-[#183D3A] px-[0.16em] py-[0.04em] text-[#FAF8F3]">
@@ -120,7 +122,7 @@ function Hero({ onSearch, trips = [] }) {
               transition={{ duration: 0.72, delay: 0.84, ease: [0.22, 1, 0.36, 1] }}
               className="mt-1 block font-normal italic text-terracotta-light sm:mt-2"
             >
-              Go find yourself.
+              {t('home.headlineSecond')}
             </motion.span>
           </h1>
 
@@ -130,8 +132,7 @@ function Hero({ onSearch, trips = [] }) {
             transition={{ duration: 0.65, delay: 1.08, ease: [0.22, 1, 0.36, 1] }}
             className="mt-5 max-w-xl text-sm leading-6 text-ivory/90 sm:mt-6 sm:text-base sm:leading-7 lg:text-lg lg:leading-8"
           >
-            Discover remarkable places, unforgettable adventures, and journeys
-            that stay with you long after you return home.
+            {t('home.description')}
           </motion.p>
 
           <motion.div
@@ -150,7 +151,7 @@ function Hero({ onSearch, trips = [] }) {
               transition={{ duration: 0.28, ease: 'easeOut' }}
               className="hero-search flex flex-col gap-2 rounded-3xl border border-white/65 bg-ivory p-2 shadow-xl shadow-forest-dark/20 sm:flex-row sm:items-center sm:rounded-full sm:pl-6"
             >
-              <label htmlFor="hero-destination" className="sr-only">Where do you want to go?</label>
+              <label htmlFor="hero-destination" className="sr-only">{t('home.searchLabel')}</label>
               <div className="flex min-h-12 min-w-0 flex-1 items-center gap-3 px-3 sm:px-0">
                 <MapPin size={20} className="shrink-0 text-terracotta-dark" aria-hidden="true" />
                 <input
@@ -168,17 +169,17 @@ function Hero({ onSearch, trips = [] }) {
                     setSelectedDestination('')
                     setSuggestionsOpen(true)
                   }}
-                  placeholder="Where do you want to go?"
+                  placeholder={t('home.searchPlaceholder')}
                   className="min-w-0 flex-1 bg-transparent py-3 text-sm text-charcoal outline-none placeholder:text-charcoal-light"
                 />
                 {destination && (
-                  <button type="button" onClick={clearDestination} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-charcoal-light transition hover:bg-sage hover:text-forest focus-visible:outline-2" aria-label="Clear destination">
+                  <button type="button" onClick={clearDestination} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-charcoal-light transition hover:bg-sage hover:text-forest focus-visible:outline-2" aria-label={t('home.clear')}>
                     <X size={17} />
                   </button>
                 )}
               </div>
               <Button type="submit" variant="secondary" size="lg">
-                Explore trips <span aria-hidden="true">↗</span>
+                {t('home.explore')} <span aria-hidden="true">↗</span>
               </Button>
             </motion.form>
 
@@ -193,8 +194,8 @@ function Hero({ onSearch, trips = [] }) {
                   className="mt-2 inline-flex items-center gap-2 rounded-full border border-white/20 bg-forest-dark/70 px-3 py-1.5 text-xs font-semibold text-white shadow-sm"
                 >
                   <Check size={14} aria-hidden="true" />
-                  Searching {selectedDestination}
-                  <button type="button" onClick={clearDestination} className="ml-1 rounded-full p-1 text-white/80 hover:bg-white/15 hover:text-white" aria-label="Clear selected destination"><X size={13} /></button>
+                  {t('home.searching', { destination: selectedDestination })}
+                  <button type="button" onClick={clearDestination} className="ml-1 rounded-full p-1 text-white/80 hover:bg-white/15 hover:text-white" aria-label={t('home.clear')}><X size={13} /></button>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -204,7 +205,7 @@ function Hero({ onSearch, trips = [] }) {
                 <motion.div
                   id="hero-destination-options"
                   role="listbox"
-                  aria-label="Available destinations"
+                  aria-label={t('home.suggestions')}
                   initial={reduceMotion ? false : { opacity: 0, y: -8, scale: 0.985 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={reduceMotion ? undefined : { opacity: 0, y: -6, scale: 0.99 }}
@@ -212,7 +213,7 @@ function Hero({ onSearch, trips = [] }) {
                   className="absolute inset-x-0 top-[calc(100%+0.65rem)] z-30 overflow-hidden rounded-2xl border border-forest/10 bg-ivory p-2 text-charcoal shadow-2xl shadow-forest-dark/25"
                 >
                   <p className="px-3 pb-2 pt-2 text-[0.65rem] font-bold uppercase tracking-[0.18em] text-charcoal-light">
-                    {destination ? 'Matching destinations' : 'Popular destinations'}
+                    {t('home.suggestions')}
                   </p>
                   {suggestions.length ? suggestions.map(([label, trip]) => (
                     <button
@@ -226,7 +227,7 @@ function Hero({ onSearch, trips = [] }) {
                       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-terracotta-dark"><MapPin size={16} /></span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-bold text-forest">{label}</span>
-                        <span className="block truncate text-xs text-charcoal-light">{trip.title || trip.name || 'Explore this destination'}</span>
+                        <span className="block truncate text-xs text-charcoal-light">{trip.translations?.[language]?.title || trip.title || trip.name || t('trip.explore')}</span>
                       </span>
                       {selectedDestination === label && <Check size={17} className="text-forest" aria-hidden="true" />}
                     </button>
@@ -235,8 +236,8 @@ function Hero({ onSearch, trips = [] }) {
                   )}
                   {selectedDestination && (
                     <div className="mt-1 flex items-center justify-between border-t border-forest/10 px-3 py-3 text-xs">
-                      <span className="font-semibold text-forest">Selected: {selectedDestination}</span>
-                      <button type="button" onClick={clearDestination} className="font-bold text-terracotta-dark underline underline-offset-2">Clear</button>
+                      <span className="font-semibold text-forest">{t('home.searching', { destination: selectedDestination })}</span>
+                      <button type="button" onClick={clearDestination} className="font-bold text-terracotta-dark underline underline-offset-2">{t('home.clear')}</button>
                     </div>
                   )}
                 </motion.div>

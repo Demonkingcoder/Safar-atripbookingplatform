@@ -4,8 +4,8 @@ import { validateRuntimeConfiguration } from '../../src/utils/runtime-configurat
 import { findUniqueIndexConflicts } from '../../src/utils/index-preflight.js'
 
 const names = [
-  'NODE_ENV', 'MONGO_URI', 'FRONTEND_URL', 'API_PUBLIC_URL', 'COOKIE_SITE_DOMAIN', 'COOKIE_DOMAIN', 'CORS_ORIGIN', 'BREVO_SMTP_HOST', 'BREVO_SMTP_PORT',
-  'BREVO_SMTP_USER', 'BREVO_SMTP_PASS', 'BREVO_SENDER_EMAIL', 'RUN_NOTIFICATION_WORKER',
+  'NODE_ENV', 'MONGO_URI', 'FRONTEND_URL', 'API_PUBLIC_URL', 'COOKIE_SITE_DOMAIN', 'COOKIE_DOMAIN', 'CORS_ORIGIN', 'BREVO_API_KEY',
+  'BREVO_SENDER_EMAIL', 'BREVO_SENDER_NAME', 'RUN_NOTIFICATION_WORKER',
   'ACCESS_TOKEN_SECRET', 'REFRESH_TOKEN_SECRET', 'COOKIE_SAME_SITE', 'RAZORPAY_MODE',
   'RAZORPAY_TEST_KEY_ID', 'RAZORPAY_TEST_KEY_SECRET', 'RAZORPAY_TEST_WEBHOOK_SECRET',
   'RAZORPAY_LIVE_KEY_ID', 'RAZORPAY_LIVE_KEY_SECRET', 'RAZORPAY_LIVE_WEBHOOK_SECRET',
@@ -17,8 +17,7 @@ function withProductionEnv(overrides, run) {
     NODE_ENV: 'production', MONGO_URI: 'mongodb+srv://cluster.example.test/safar',
     FRONTEND_URL: 'https://staging.safar.example', API_PUBLIC_URL: 'https://api-staging.safar.example',
     COOKIE_SITE_DOMAIN: 'safar.example', COOKIE_DOMAIN: '', CORS_ORIGIN: 'https://staging.safar.example',
-    BREVO_SMTP_HOST: 'smtp.example.test', BREVO_SMTP_PORT: '587', BREVO_SMTP_USER: 'smtp-user',
-    BREVO_SMTP_PASS: 'smtp-password-placeholder', BREVO_SENDER_EMAIL: 'notifications@example.test',
+    BREVO_API_KEY: 'brevo-api-key-placeholder', BREVO_SENDER_EMAIL: 'notifications@example.test', BREVO_SENDER_NAME: 'Safar',
     RUN_NOTIFICATION_WORKER: 'false', ACCESS_TOKEN_SECRET: 'access-secret-placeholder',
     REFRESH_TOKEN_SECRET: 'refresh-secret-placeholder', COOKIE_SAME_SITE: 'lax', RAZORPAY_MODE: 'test',
     RAZORPAY_TEST_KEY_ID: 'test-id', RAZORPAY_TEST_KEY_SECRET: 'test-secret', RAZORPAY_TEST_WEBHOOK_SECRET: 'test-webhook',

@@ -32,6 +32,9 @@ const bookingSchema = new mongoose.Schema(
       },
     },
 
+    // Snapshot the customer's selected UI language for lifecycle notifications.
+    notificationLanguage: { type: String, enum: ["en", "hi"], default: "en" },
+
     pricePerSeat: {
       type: Number,
       required: true,
@@ -115,6 +118,7 @@ const bookingSchema = new mongoose.Schema(
         type: String,
         default: null,
     },
+    paymentFailureCode: { type: String, maxlength: 64, default: null },
   },
   { timestamps: true }
 );

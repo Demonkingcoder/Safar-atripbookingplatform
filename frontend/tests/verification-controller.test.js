@@ -162,7 +162,7 @@ test('resend for an already verified account returns the generic response withou
   })
 })
 
-test('resend preserves the stored verification token when SMTP configuration is unavailable', async () => {
+test('resend preserves the stored verification token when email configuration is unavailable', async () => {
   assert.equal(process.env.BREVO_SENDER_EMAIL, undefined, 'test must not be able to send real email')
 
   let saveCalls = 0

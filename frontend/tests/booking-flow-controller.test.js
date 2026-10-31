@@ -77,10 +77,10 @@ async function withOverrides(overrides, run) {
   }
 }
 
-function request({ userId = 'customer-a', departureId = '64b000000000000000000001', numberOfSeats = 1, key } = {}) {
+function request({ userId = 'customer-a', departureId = '64b000000000000000000001', numberOfSeats = 1, notificationLanguage, key } = {}) {
   return {
     user: { _id: userId },
-    body: { departureId, numberOfSeats },
+    body: { departureId, numberOfSeats, notificationLanguage },
     get(name) { return name === 'Idempotency-Key' ? key : undefined },
   }
 }
@@ -142,6 +142,16 @@ test('one booking reserves and prices four travellers on the server', async () =
     assert.equal(booking.totalAmount, 1000)
     assert.equal(inventory.seats, 0)
   })
+})
+
+test('booking snapshots only a supported email language with English fallback', async () => {
+  for (const [requestedLanguage, expectedLanguage] of [['hi', 'hi'], ['fr', 'en']]) {
+    const inventory = makeSeatInventory(2)
+    await withOverrides(inventoryOverrides(inventory), async () => {
+      const result = await invoke(createBooking, request({ notificationLanguage: requestedLanguage, key: `locale-${requestedLanguage}` }))
+      assert.equal(result.body.data.booking.notificationLanguage, expectedLanguage)
+    })
+  }
 })
 
 test('separate intentional bookings for one departure are allowed while seats remain', async () => {
@@ -308,6 +318,34 @@ test('payment order returns the active mode public Key ID for Checkout', async (
   })
 })
 
+test('payment provider order errors return a safe 502 and sanitized request diagnostics', async () => {
+  const booking = { _id: '64b000000000000000000039', user: 'customer-a', status: 'pending', paymentStatus: 'pending', totalAmount: 250, razorpayOrderId: null }
+  const originalConsoleError = console.error
+  const logs = []
+  console.error = (...args) => logs.push(args.join(' '))
+  try {
+    await withOverrides([
+      { model: Booking, methods: {
+        async findOne() { return booking },
+        async findOneAndUpdate() { return booking },
+        async updateOne() { return { matchedCount: 1 } },
+      } },
+      { model: razorpay, methods: { orders: { async create() { const error = new Error('provider response contains private details'); error.code = 'ETIMEDOUT'; throw error } } } },
+    ], async () => {
+      const result = await invoke(createPaymentOrder, {
+        params: { bookingId: booking._id }, user: { _id: 'customer-a' }, requestId: 'req-payment-safe',
+      })
+      assert.equal(result.error?.statusCode, 502)
+      assert.match(result.error.message, /payment provider is temporarily unavailable|could not prepare checkout/i)
+      assert.equal(result.error.message.includes('private details'), false)
+      assert.equal(logs.some((line) => line.includes('req-payment-safe') && line.includes(booking._id) && line.includes('create_order') && line.includes('network')), true)
+      assert.equal(logs.some((line) => line.includes('private details')), false)
+    })
+  } finally {
+    console.error = originalConsoleError
+  }
+})
+
 test('invalid payment signature leaves booking unconfirmed', async () => {
   const booking = { _id: '64b000000000000000000004', user: 'customer-a', status: 'pending', paymentStatus: 'pending', razorpayOrderId: 'order-a' }
   let updateCalled = false
@@ -322,7 +360,7 @@ test('invalid payment signature leaves booking unconfirmed', async () => {
   })
 })
 
-test('a late captured payment on a cancelled booking triggers one refund and never revives the booking', async () => {
+test('a late captured payment on a cancelled booking starts a refund without restoring released seats', async () => {
   const booking = { _id: '64b000000000000000000005', user: 'customer-a', status: 'cancelled', paymentStatus: 'failed', razorpayOrderId: 'order-cancelled', totalAmount: 250, seatsReleasedAt: new Date() }
   const signature = crypto.createHmac('sha256', process.env.RAZORPAY_TEST_KEY_SECRET).update('order-cancelled|pay-late').digest('hex')
   let updateCalled = false
@@ -343,7 +381,7 @@ test('a late captured payment on a cancelled booking triggers one refund and nev
     assert.equal(result.statusCode, 202)
     assert.equal(updateCalled, true)
     assert.equal(refundCalls, 1)
-    assert.equal(booking.status, 'cancelled')
+    assert.equal(booking.status, 'refund_pending')
     assert.equal(booking.paymentStatus, 'refund_pending')
     const duplicate = await invoke(verifyPayment, { params: { bookingId: booking._id }, user: { _id: booking.user }, body: { razorpay_order_id: booking.razorpayOrderId, razorpay_payment_id: 'pay-late', razorpay_signature: signature } })
     assert.equal(duplicate.statusCode, 202)
@@ -490,6 +528,7 @@ test('checkout dismissal reconciles an empty provider payment list and releases 
     const result = await invoke(reconcilePaymentStatus, { params: { bookingId: booking._id }, user: { _id: booking.user } })
     assert.equal(result.statusCode, 200)
     assert.equal(booking.status, 'failed')
+    assert.equal(booking.paymentFailureCode, 'provider_payment_failed')
     assert.equal(booking.paymentStatus, 'failed')
     assert.equal(releasedSeats, 1)
   })
@@ -514,7 +553,7 @@ test('signed captured-payment webhook confirms once and safely acknowledges repl
   let updateCount = 0
   const rawBody = Buffer.from(JSON.stringify({
     event: 'payment.captured',
-    payload: { payment: { entity: { id: 'pay-webhook', order_id: 'order-webhook', amount: 25000, currency: 'INR' } } },
+    payload: { payment: { entity: { id: 'pay-webhook', order_id: 'order-webhook', amount: 25000, currency: 'INR', status: 'captured' } } },
   }))
   const signature = crypto.createHmac('sha256', process.env.RAZORPAY_TEST_WEBHOOK_SECRET).update(rawBody).digest('hex')
   await withOverrides([{ model: Booking, methods: {
@@ -536,6 +575,136 @@ test('signed captured-payment webhook confirms once and safely acknowledges repl
     assert.equal((await invoke(handlePaymentWebhook, req)).statusCode, 200)
     assert.equal(updateCount, 1)
     assert.equal(booking.status, 'confirmed')
+  })
+})
+
+test('signed definitive payment.failed webhook releases seats once and queues failure notification', async () => {
+  const booking = { _id: 'booking-failed-webhook', user: 'customer-a', departure: 'departure-a', numberOfSeats: 2, status: 'pending', paymentStatus: 'pending', razorpayOrderId: 'order-failed-webhook', totalAmount: 500, seatsReleasedAt: null }
+  let releasedSeats = 0
+  const rawBody = Buffer.from(JSON.stringify({
+    event: 'payment.failed',
+    payload: { payment: { entity: { id: 'pay-failed-webhook', order_id: booking.razorpayOrderId, amount: 50000, currency: 'INR', status: 'failed' } } },
+  }))
+  const signature = crypto.createHmac('sha256', process.env.RAZORPAY_TEST_WEBHOOK_SECRET).update(rawBody).digest('hex')
+  await withOverrides([
+    { model: Booking, methods: {
+      async findOne() { return booking },
+      async findOneAndUpdate(filter, update) {
+        if (filter.status?.$in && !filter.status.$in.includes(booking.status)) return null
+        if (filter.seatsReleasedAt === null && booking.seatsReleasedAt !== null) return null
+        Object.assign(booking, update.$set)
+        return booking
+      },
+    } },
+    { model: Departure, methods: { async updateOne(_filter, update) { releasedSeats += update.$inc.availableSeats; return { matchedCount: 1 } } } },
+    { model: razorpay, methods: { orders: { ...razorpay.orders, async fetchPayments() { return { items: [{ status: 'failed' }] } } } } },
+  ], async () => {
+    const req = {
+      rawBody,
+      body: JSON.parse(rawBody.toString()),
+      get(name) { return name.toLowerCase() === 'x-razorpay-signature' ? signature : name.toLowerCase() === 'x-razorpay-event-id' ? 'event-failed-1' : undefined },
+    }
+    assert.equal((await invoke(handlePaymentWebhook, req)).statusCode, 200)
+    assert.equal(booking.status, 'failed')
+    assert.equal(booking.paymentStatus, 'failed')
+    assert.equal(releasedSeats, 2)
+    assert.equal((await invoke(handlePaymentWebhook, req)).statusCode, 200)
+    assert.equal(releasedSeats, 2)
+  })
+})
+
+test('late payment.failed webhook cannot downgrade a confirmed booking', async () => {
+  const booking = { _id: 'booking-paid-failure', status: 'confirmed', paymentStatus: 'paid', razorpayOrderId: 'order-paid-failure', razorpayPaymentId: 'pay-captured', totalAmount: 250 }
+  const rawBody = Buffer.from(JSON.stringify({
+    event: 'payment.failed',
+    payload: { payment: { entity: { id: 'pay-old-failed', order_id: booking.razorpayOrderId, amount: 25000, currency: 'INR', status: 'failed' } } },
+  }))
+  const signature = crypto.createHmac('sha256', process.env.RAZORPAY_TEST_WEBHOOK_SECRET).update(rawBody).digest('hex')
+  let releaseCalled = false
+  await withOverrides([
+    { model: Booking, methods: { async findOne() { return booking }, async findOneAndUpdate() { releaseCalled = true; return null } } },
+    { model: Departure, methods: { async updateOne() { releaseCalled = true; return { matchedCount: 1 } } } },
+  ], async () => {
+    const result = await invoke(handlePaymentWebhook, {
+      rawBody, body: JSON.parse(rawBody.toString()),
+      get(name) { return name.toLowerCase() === 'x-razorpay-signature' ? signature : name.toLowerCase() === 'x-razorpay-event-id' ? 'event-old-failure' : undefined },
+    })
+    assert.equal(result.statusCode, 200)
+    assert.equal(booking.status, 'confirmed')
+    assert.equal(booking.paymentStatus, 'paid')
+    assert.equal(releaseCalled, false)
+  })
+})
+
+test('late captured payment after a released failed booking starts a refund without reviving tickets', async () => {
+  const releasedAt = new Date(Date.now() - 1000)
+  const booking = {
+    _id: 'booking-late-capture', user: 'customer-a', departure: 'departure-a', numberOfSeats: 1,
+    status: 'failed', paymentStatus: 'failed', razorpayOrderId: 'order-late-capture', totalAmount: 250,
+    seatsReleasedAt: releasedAt, refundAttempt: 0, refundId: null, refundRequestedAt: null, refundRetryAfter: null,
+  }
+  const rawBody = Buffer.from(JSON.stringify({
+    event: 'payment.captured',
+    payload: { payment: { entity: { id: 'pay-late-capture', order_id: booking.razorpayOrderId, amount: 25000, currency: 'INR', status: 'captured' } } },
+  }))
+  const signature = crypto.createHmac('sha256', process.env.RAZORPAY_TEST_WEBHOOK_SECRET).update(rawBody).digest('hex')
+  let refundCalls = 0
+  let seatReleaseCalls = 0
+  await withOverrides([
+    { model: Booking, methods: {
+      async findOne() { return booking },
+      async findOneAndUpdate(filter, update) {
+        if (filter.status?.$in && !filter.status.$in.includes(booking.status)) return null
+        if (typeof filter.status === 'string' && filter.status !== booking.status) return null
+        if (typeof filter.paymentStatus === 'string' && filter.paymentStatus !== booking.paymentStatus) return null
+        Object.assign(booking, update.$set || {})
+        return booking
+      },
+      async findById() { return booking },
+    } },
+    { model: Departure, methods: { async updateOne() { seatReleaseCalls += 1; return { matchedCount: 1 } } } },
+    { model: razorpay, methods: { payments: {
+      ...razorpay.payments,
+      async refund(paymentId, data) {
+        refundCalls += 1
+        return { id: 'refund-late-capture', payment_id: paymentId, amount: data.amount, status: 'pending' }
+      },
+    } } },
+  ], async () => {
+    const result = await invoke(handlePaymentWebhook, {
+      rawBody, body: JSON.parse(rawBody.toString()),
+      get(name) { return name.toLowerCase() === 'x-razorpay-signature' ? signature : name.toLowerCase() === 'x-razorpay-event-id' ? 'event-late-capture' : undefined },
+    })
+    assert.equal(result.statusCode, 200)
+    assert.equal(booking.status, 'refund_pending')
+    assert.equal(booking.paymentStatus, 'refund_pending')
+    assert.equal(booking.razorpayPaymentId, 'pay-late-capture')
+    assert.equal(booking.seatsReleasedAt, releasedAt)
+    assert.equal(refundCalls, 1)
+    assert.equal(seatReleaseCalls, 0)
+  })
+})
+
+test('payment.failed webhook keeps seats reserved when another provider payment is unresolved', async () => {
+  const booking = { _id: 'booking-pending-failure', status: 'pending', paymentStatus: 'pending', razorpayOrderId: 'order-pending-failure', totalAmount: 250 }
+  const rawBody = Buffer.from(JSON.stringify({
+    event: 'payment.failed',
+    payload: { payment: { entity: { id: 'pay-failed-attempt', order_id: booking.razorpayOrderId, amount: 25000, currency: 'INR', status: 'failed' } } },
+  }))
+  const signature = crypto.createHmac('sha256', process.env.RAZORPAY_TEST_WEBHOOK_SECRET).update(rawBody).digest('hex')
+  let releaseCalled = false
+  await withOverrides([
+    { model: Booking, methods: { async findOne() { return booking }, async findOneAndUpdate() { releaseCalled = true; return null } } },
+    { model: Departure, methods: { async updateOne() { releaseCalled = true; return { matchedCount: 1 } } } },
+    { model: razorpay, methods: { orders: { ...razorpay.orders, async fetchPayments() { return { items: [{ status: 'failed' }, { status: 'authorized' }] } } } } },
+  ], async () => {
+    const result = await invoke(handlePaymentWebhook, {
+      rawBody, body: JSON.parse(rawBody.toString()),
+      get(name) { return name.toLowerCase() === 'x-razorpay-signature' ? signature : undefined },
+    })
+    assert.equal(result.statusCode, 200)
+    assert.equal(booking.status, 'pending')
+    assert.equal(releaseCalled, false)
   })
 })
 

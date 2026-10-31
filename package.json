@@ -8,6 +8,8 @@
     "start": "node src/bserver.js",
     "worker": "node src/worker.js",
     "verify:smtp": "node src/scripts/verify-smtp.js",
+    "verify:brevo-config": "node src/scripts/verify-smtp.js",
+    "diagnose:booking-price": "node src/scripts/diagnose-booking-price.js",
     "preflight:indexes": "node src/scripts/preflight-indexes.js",
     "test": "node --test frontend/tests/*.test.js"
   },

@@ -202,25 +202,10 @@ function validateCors(frontendOrigin, sameSite, siteDomain) {
 }
 
 function validateEmailConfiguration() {
-  for (const name of [
-    "BREVO_SMTP_HOST",
-    "BREVO_SMTP_USER",
-    "BREVO_SMTP_PASS",
-    "BREVO_SENDER_EMAIL",
-  ]) {
-    required(name);
-  }
-
-  const smtpPort = Number(required("BREVO_SMTP_PORT"));
-
-  if (
-    !Number.isInteger(smtpPort) ||
-    smtpPort < 1 ||
-    smtpPort > 65535
-  ) {
-    throw new Error(
-      "BREVO_SMTP_PORT must be a valid TCP port"
-    );
+  required("BREVO_API_KEY");
+  const sender = required("BREVO_SENDER_EMAIL");
+  if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(sender)) {
+    throw new Error("BREVO_SENDER_EMAIL must be a valid email address");
   }
 }
 

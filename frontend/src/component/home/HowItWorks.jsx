@@ -1,5 +1,6 @@
 
 import { motion, useReducedMotion } from 'motion/react'
+import { useLanguage } from '../../context/LanguageContext'
 
 const steps = [
   {
@@ -26,6 +27,7 @@ const steps = [
 ]
 
 function HowItWorks() {
+  const { t } = useLanguage()
   const reduceMotion = useReducedMotion()
   return (
     <section className="bg-forest px-5 py-20 text-ivory md:px-8 md:py-28">
@@ -38,20 +40,19 @@ function HowItWorks() {
           transition={{ duration: 0.58, ease: [0.22, 1, 0.36, 1] }}
         >
           <p className="mb-4 text-xs font-semibold uppercase tracking-[0.22em] text-terracotta-light">
-            Your journey starts here
+            {t('story.howEyebrow')}
           </p>
 
           <h2 className="font-heading text-4xl font-semibold leading-tight sm:text-5xl">
-            Three steps.
+            {t('story.howTitle')}
             <br />
             <span className="italic text-terracotta-light">
-              One unforgettable journey.
+              {t('story.howTitle2')}
             </span>
           </h2>
 
           <p className="mt-5 max-w-xl text-base leading-7 text-ivory/70">
-            We've designed the journey from discovering a trip to managing
-            your booking to feel simple and clear.
+            {t('story.howBody')}
           </p>
         </motion.div>
 
@@ -87,11 +88,11 @@ function HowItWorks() {
               </p>
 
               <h3 className="mt-3 font-heading text-2xl font-semibold">
-                {step.title}
+                {t(`story.step${index + 1}`)}
               </h3>
 
               <p className="mt-4 max-w-sm text-sm leading-7 text-ivory/70">
-                {step.description}
+                {t(`story.step${index + 1}Body`)}
               </p>
             </motion.article>
           ))}

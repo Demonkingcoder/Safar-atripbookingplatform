@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import net from 'node:net'
 import test, { after } from 'node:test'
 import User from '../../src/models/User.js'
 import RefreshSession from '../../src/models/RefreshSession.js'
@@ -8,76 +7,23 @@ import RefreshSession from '../../src/models/RefreshSession.js'
 let rejectRecipient = false
 let rejectAuthentication = false
 let capturedMessage = ''
-let smtpConnectionCount = 0
-const smtpServer = net.createServer((socket) => {
-  smtpConnectionCount += 1
-  socket.setEncoding('utf8')
-  socket.write('220 safar-test-smtp ESMTP\r\n')
-  let buffer = ''
-  let readingMessage = false
-
-  socket.on('data', (chunk) => {
-    buffer += chunk
-    let lineEnd = buffer.indexOf('\r\n')
-    while (lineEnd !== -1) {
-      const line = buffer.slice(0, lineEnd)
-      buffer = buffer.slice(lineEnd + 2)
-
-      if (readingMessage) {
-        if (line === '.') {
-          readingMessage = false
-          socket.write('250 2.0.0 queued for test\r\n')
-        } else {
-          capturedMessage += `${line}\r\n`
-        }
-      } else if (/^(EHLO|HELO) /i.test(line)) {
-        socket.write('250-safar-test-smtp\r\n250-8BITMIME\r\n250-AUTH PLAIN LOGIN\r\n250 SMTPUTF8\r\n')
-      } else if (/^AUTH PLAIN(?:\s|$)/i.test(line)) {
-        socket.write(rejectAuthentication
-          ? '535 5.7.8 authentication rejected for test\r\n'
-          : '235 2.7.0 authentication accepted\r\n')
-      } else if (/^AUTH LOGIN$/i.test(line)) {
-        socket.write('334 VXNlcm5hbWU6\r\n')
-      } else if (/^(?:[A-Za-z0-9+/]+=*)$/i.test(line) && line.length > 8) {
-        socket.write(rejectAuthentication
-          ? '535 5.7.8 authentication rejected for test\r\n'
-          : '235 2.7.0 authentication accepted\r\n')
-      } else if (/^MAIL FROM:/i.test(line)) {
-        socket.write('250 2.1.0 sender accepted\r\n')
-      } else if (/^RCPT TO:/i.test(line)) {
-        socket.write(rejectRecipient
-          ? '550 5.1.1 recipient rejected for test\r\n'
-          : '250 2.1.5 recipient accepted\r\n')
-      } else if (/^DATA$/i.test(line)) {
-        readingMessage = true
-        socket.write('354 end with <CRLF>.<CRLF>\r\n')
-      } else if (/^QUIT$/i.test(line)) {
-        socket.write('221 2.0.0 goodbye\r\n')
-        socket.end()
-      } else {
-        socket.write('250 2.0.0 ok\r\n')
-      }
-
-      lineEnd = buffer.indexOf('\r\n')
-    }
-  })
-})
-
-await new Promise((resolve, reject) => {
-  smtpServer.once('error', reject)
-  smtpServer.listen(0, '127.0.0.1', resolve)
-})
-
 process.env.BREVO_SENDER_EMAIL = 'sender@example.test'
-process.env.BREVO_SMTP_HOST = '127.0.0.1'
-process.env.BREVO_SMTP_PORT = String(smtpServer.address().port)
-process.env.BREVO_SMTP_USER = 'smtp-login-test-only'
-process.env.BREVO_SMTP_PASS = 'smtp-key-test-only'
+process.env.BREVO_API_KEY = 'brevo-api-key-test-only'
+
+let providerRequestCount = 0
+const originalFetch = globalThis.fetch
+globalThis.fetch = async (_url, options) => {
+  providerRequestCount += 1
+  capturedMessage = options.body
+  if (rejectRecipient) return new Response(JSON.stringify({ message: 'recipient rejected for test' }), { status: 400 })
+  if (rejectAuthentication) return new Response(JSON.stringify({ message: 'authentication rejected for test' }), { status: 401 })
+  return new Response(JSON.stringify({ messageId: 'test-message-id' }), { status: 201 })
+}
 
 const { registerUser, resendVerificationEmail, forgotPassword, resetPassword } = await import('../../src/controllers/authController.js')
 const { sendEmail, verifyEmailTransport } = await import('../../src/utils/mail.js')
 
-after(() => new Promise((resolve) => smtpServer.close(resolve)))
+after(() => { globalThis.fetch = originalFetch })
 
 function invoke(handler, req) {
   return new Promise((resolve) => {
@@ -127,7 +73,7 @@ const registrationBody = {
   password: 'test-password-123',
 }
 
-test('registration succeeds only when the SMTP server accepts the registered recipient', async () => {
+test('registration succeeds only when Brevo accepts the registered recipient', async () => {
   rejectRecipient = false
   const createdUser = { ...registrationBody, _id: 'test-user-id', isEmailVerified: false }
 
@@ -139,7 +85,7 @@ test('registration succeeds only when the SMTP server accepts the registered rec
   })
 })
 
-test('registration keeps the created account and returns an email-send error when SMTP rejects the recipient', async () => {
+test('registration keeps the created account and returns an email-send error when Brevo rejects the recipient', async () => {
   rejectRecipient = true
   const createdUser = { ...registrationBody, _id: 'test-user-id', isEmailVerified: false }
   const originalConsoleError = console.error
@@ -151,14 +97,14 @@ test('registration keeps the created account and returns an email-send error whe
       const result = await invoke(registerUser, { body: registrationBody, requestId: 'register-request-id' })
       assert.equal(result.error?.statusCode, 503)
       assert.match(result.error?.message, /account created, but the verification email could not be sent/i)
-      assert.doesNotMatch(result.error.message, /recipient rejected|smtp-key-test-only|smtp-login-test-only/i)
+      assert.doesNotMatch(result.error.message, /recipient rejected|brevo-api-key-test-only/i)
       assert.equal(createdUser.isEmailVerified, false)
       assert.match(createdUser.emailVerificationToken, /^[a-f0-9]{64}$/)
       assert.ok(createdUser.emailVerificationExpiry instanceof Date)
       assert.equal(JSON.stringify(result.error).includes('recipient rejected for test'), false)
     })
     assert.match(logs.join('\n'), /register-request-id/)
-    assert.doesNotMatch(logs.join('\n'), /recipient rejected for test|smtp-key-test-only|traveler@example\.test/i)
+    assert.doesNotMatch(logs.join('\n'), /recipient rejected for test|brevo-api-key-test-only|traveler@example\.test/i)
   } finally {
     console.error = originalConsoleError
     rejectRecipient = false
@@ -185,7 +131,7 @@ test('invalid and duplicate registrations are rejected before sending email', as
   }
 })
 
-test('resend uses the existing verification route and reports success after SMTP acceptance', async () => {
+test('resend uses the existing verification route and reports success after Brevo acceptance', async () => {
   rejectRecipient = false
   let saved = false
   const user = {
@@ -208,7 +154,7 @@ test('resend uses the existing verification route and reports success after SMTP
   }
 })
 
-test('resend SMTP failure preserves the prior verification token and logs only safe details', async () => {
+test('resend Brevo failure preserves the prior verification token and logs only safe details', async () => {
   rejectRecipient = true
   const priorExpiry = new Date('2027-01-01T00:00:00.000Z')
   const user = {
@@ -233,13 +179,13 @@ test('resend SMTP failure preserves the prior verification token and logs only s
     })
     assert.equal(result.error?.statusCode, 503)
     assert.match(result.error.message, /unable to send verification email/i)
-    assert.doesNotMatch(result.error.message, /recipient rejected|smtp-key-test-only|smtp-login-test-only/i)
+    assert.doesNotMatch(result.error.message, /recipient rejected|brevo-api-key-test-only/i)
     assert.equal(user.emailVerificationToken, 'previous-token-hash')
     assert.equal(user.emailVerificationExpiry, priorExpiry)
     assert.equal(user.saveCalls, 0)
     assert.equal(JSON.stringify(result.error).includes('recipient rejected for test'), false)
     assert.match(logs.join('\n'), /resend-request-id/)
-    assert.doesNotMatch(logs.join('\n'), /recipient rejected for test|smtp-key-test-only|traveler@example\.test/i)
+    assert.doesNotMatch(logs.join('\n'), /recipient rejected for test|brevo-api-key-test-only|traveler@example\.test/i)
   } finally {
     User.findOne = originalFindOne
     console.error = originalConsoleError
@@ -247,14 +193,16 @@ test('resend SMTP failure preserves the prior verification token and logs only s
   }
 })
 
-test('SMTP verification succeeds and reports authentication failure without leaking provider text', async () => {
+test('Brevo configuration validation makes no provider request; send errors stay sanitized', async () => {
   assert.equal(await verifyEmailTransport(), true)
+  const requestsBefore = providerRequestCount
+  assert.equal(providerRequestCount, requestsBefore)
 
   rejectAuthentication = true
   try {
-    await assert.rejects(verifyEmailTransport(), (error) => {
-      assert.equal(typeof error.code, 'string')
-      assert.doesNotMatch(error.message, /smtp-key-test-only|smtp-login-test-only/)
+    await assert.rejects(sendEmail({ email: 'traveler@example.test', subject: 'test', textContent: 'test', htmlContent: '<p>test</p>' }), (error) => {
+      assert.equal(error.code, 'brevo_api_auth_failed')
+      assert.doesNotMatch(error.message, /authentication rejected for test|brevo-api-key-test-only/)
       return true
     })
   } finally {
@@ -262,15 +210,15 @@ test('SMTP verification succeeds and reports authentication failure without leak
   }
 })
 
-test('invalid sender or recipient is rejected before opening an SMTP connection', async () => {
+test('invalid sender or recipient is rejected before requesting the Brevo API', async () => {
   const originalSender = process.env.BREVO_SENDER_EMAIL
-  const connectionsBefore = smtpConnectionCount
+  const requestsBefore = providerRequestCount
   process.env.BREVO_SENDER_EMAIL = 'not-an-email'
   try {
     await assert.rejects(sendEmail({ email: 'traveler@example.test', subject: 'test', textContent: 'test', htmlContent: '<p>test</p>' }), { code: 'email_sender_invalid' })
     process.env.BREVO_SENDER_EMAIL = originalSender
     await assert.rejects(sendEmail({ email: 'bad-recipient', subject: 'test', textContent: 'test', htmlContent: '<p>test</p>' }), { code: 'email_recipient_invalid' })
-    assert.equal(smtpConnectionCount, connectionsBefore)
+    assert.equal(providerRequestCount, requestsBefore)
   } finally {
     process.env.BREVO_SENDER_EMAIL = originalSender
   }

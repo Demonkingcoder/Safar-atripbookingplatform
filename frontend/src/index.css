@@ -245,6 +245,7 @@ img {
 .nav-section-link::after { position: absolute; right: .75rem; bottom: .28rem; left: .75rem; height: 2px; border-radius: 99px; background: var(--color-terracotta); content: ""; transform: scaleX(0); transform-origin: left; transition: transform .24s ease; }
 .nav-section-link:hover, .nav-section-link.is-active { background: rgba(24,61,58,.055); color: var(--color-forest); }
 .nav-section-link:hover::after, .nav-section-link.is-active::after { transform: scaleX(1); }
+.language-switcher select.language-select { width: auto; min-height: 1.5rem; border: 0; background: transparent; padding: 0 .5rem 0 0; color: var(--color-forest); box-shadow: none; }
 button:not(:disabled) { transition: transform .18s ease, color .2s ease, background-color .2s ease, border-color .2s ease, box-shadow .2s ease; }
 @media (hover: hover) and (pointer: fine) { button:not(:disabled):hover { transform: scale(1.025); } }
 button:not(:disabled):active { transform: scale(.975); }

@@ -217,8 +217,8 @@ async function confirmCapturedPayment(booking, payment) {
     });
   } else {
     refundable = await transitionBookingAndQueueNotification({
-      filter: { _id: booking._id, status: { $in: ["cancelled", "expired", "refund_pending"] }, paymentStatus: { $ne: "refunded" } },
-      update: { $set: { paymentStatus: "refund_pending", razorpayPaymentId: payment.id } },
+      filter: { _id: booking._id, status: { $in: ["cancelled", "expired", "failed", "refund_pending"] }, paymentStatus: { $ne: "refunded" } },
+      update: { $set: { status: "refund_pending", paymentStatus: "refund_pending", razorpayPaymentId: payment.id } },
       type: "refund_pending",
       reason: "Payment captured after the reservation had closed",
     });
@@ -238,12 +238,18 @@ async function resolveProviderPayment(booking) {
   return { state: "unpaid", payment: null };
 }
 
-async function markPendingPaymentFailed(booking) {
+function safePaymentFailureCode(payment) {
+  const code = payment?.error_code;
+  return typeof code === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(code) ? code : "provider_payment_failed";
+}
+
+async function markPendingPaymentFailed(booking, payment = null) {
   const failed = await transitionAndReleaseSeats({
     bookingId: booking._id,
     fromStatuses: ["pending"],
-    set: { status: "failed", paymentStatus: "failed" },
+    set: { status: "failed", paymentStatus: "failed", paymentFailureCode: safePaymentFailureCode(payment) },
     notification: { type: "payment_failed" },
+    expected: { paymentStatus: "pending", ...(booking.razorpayOrderId ? { razorpayOrderId: booking.razorpayOrderId } : {}) },
   });
   return failed;
 }
@@ -344,6 +350,7 @@ const createBooking = asyncHandler(async (req, res) => {
         trip: trip._id,
         departure: reservedDeparture._id,
         numberOfSeats,
+        notificationLanguage: req.body?.notificationLanguage === "hi" ? "hi" : "en",
         pricePerSeat: reservedDeparture.price,
         totalAmount: reservedDeparture.price * numberOfSeats,
         status: "pending",
@@ -609,6 +616,21 @@ const paymentOrderResponse = (res, order, message = "Payment order created succe
     key_id: getRazorpayConfiguration().keyId,
   }, message));
 
+const fetchRazorpayOrderSafely = async (orderId, req, bookingId) => {
+  try {
+    return await razorpay.orders.fetch(orderId);
+  } catch (error) {
+    console.error("Safar payment provider request failed", JSON.stringify({
+      requestId: req.requestId || "unknown",
+      bookingId: String(bookingId),
+      operation: "fetch_order",
+      errorName: typeof error?.name === "string" ? error.name.replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 40) : "Error",
+      errorCategory: ["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "ENOTFOUND"].includes(error?.code) ? "network" : "provider",
+    }));
+    throw new ApiError(502, "The payment provider is temporarily unavailable. Please retry shortly.");
+  }
+};
+
 const createPaymentOrder = asyncHandler(async (req, res) => {
   const { bookingId } = req.params;
   if (!mongoose.isValidObjectId(bookingId)) throw new ApiError(400, "Invalid booking ID");
@@ -626,7 +648,7 @@ const createPaymentOrder = asyncHandler(async (req, res) => {
   const amount = Math.round(booking.totalAmount * 100);
   if (!Number.isSafeInteger(amount) || amount < 100) throw new ApiError(400, "Invalid payment amount");
   if (booking.razorpayOrderId) {
-    const existingOrder = await razorpay.orders.fetch(booking.razorpayOrderId);
+    const existingOrder = await fetchRazorpayOrderSafely(booking.razorpayOrderId, req, booking._id);
     if (existingOrder.id !== booking.razorpayOrderId || existingOrder.amount !== amount || existingOrder.currency !== "INR") {
       throw new ApiError(409, "The existing payment order does not match this booking");
     }
@@ -655,18 +677,30 @@ const createPaymentOrder = asyncHandler(async (req, res) => {
   if (!claimedBooking) {
     const currentBooking = await Booking.findOne({ _id: booking._id, user: req.user._id });
     if (currentBooking?.razorpayOrderId) {
-      const existingOrder = await razorpay.orders.fetch(currentBooking.razorpayOrderId);
+      const existingOrder = await fetchRazorpayOrderSafely(currentBooking.razorpayOrderId, req, booking._id);
       return paymentOrderResponse(res, existingOrder, "Existing payment order returned");
     }
     throw new ApiError(409, "Payment order is already being prepared. Please retry shortly.");
   }
 
   try {
-    const order = await razorpay.orders.create({
-      amount,
-      currency: "INR",
-      receipt: 'booking_' + booking._id,
-    });
+    let order;
+    try {
+      order = await razorpay.orders.create({
+        amount,
+        currency: "INR",
+        receipt: 'booking_' + booking._id,
+      });
+    } catch (error) {
+      console.error("Safar payment provider request failed", JSON.stringify({
+        requestId: req.requestId || "unknown",
+        bookingId: String(booking._id),
+        operation: "create_order",
+        errorName: typeof error?.name === "string" ? error.name.replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 40) : "Error",
+        errorCategory: ["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "ENOTFOUND"].includes(error?.code) ? "network" : "provider",
+      }));
+      throw new ApiError(502, "The payment provider could not prepare checkout. Please retry shortly.");
+    }
     if (!order?.id || order.amount !== amount || order.currency !== "INR") throw new ApiError(502, "The payment provider returned an invalid order");
     const savedBooking = await Booking.findOneAndUpdate(
       { _id: booking._id, user: req.user._id, razorpayOrderStartedAt: now, razorpayOrderId: null },
@@ -676,7 +710,7 @@ const createPaymentOrder = asyncHandler(async (req, res) => {
     if (!savedBooking) {
       const currentBooking = await Booking.findOne({ _id: booking._id, user: req.user._id });
       if (currentBooking?.razorpayOrderId) {
-        const existingOrder = await razorpay.orders.fetch(currentBooking.razorpayOrderId);
+        const existingOrder = await fetchRazorpayOrderSafely(currentBooking.razorpayOrderId, req, booking._id);
         return paymentOrderResponse(res, existingOrder, "Existing payment order returned");
       }
       throw new ApiError(409, "Payment order could not be saved. Please retry shortly.");
@@ -722,7 +756,19 @@ const verifyPayment = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Payment does not match this booking's amount, currency, or order");
   }
   if (payment.status === "failed") {
-    await markPendingPaymentFailed(booking);
+    const orderState = await resolveProviderPayment(booking);
+    if (orderState.state === "captured") {
+      const updated = await handleCapturedPaymentForOrder(booking, orderState.payment);
+      return res.status(updated?.status === "confirmed" ? 200 : 202).json(new ApiResponse(
+        updated?.status === "confirmed" ? 200 : 202,
+        { booking: updated, paymentStatus: updated?.paymentStatus },
+        updated?.status === "confirmed" ? "Your booking is confirmed! Your tickets are ready." : "The payment was captured after the reservation closed. A refund is being processed."
+      ));
+    }
+    if (orderState.state !== "failed") {
+      return res.status(202).json(new ApiResponse(202, { booking, paymentStatus: "pending" }, "Your payment is being processed. Please wait while we confirm your booking."));
+    }
+    await markPendingPaymentFailed(booking, payment);
     throw new ApiError(409, bookingPaymentFailureMessage);
   }
   if (payment.status !== "captured") {
@@ -824,7 +870,7 @@ const handlePaymentWebhook = asyncHandler(async (req, res) => {
       });
     } else if (eventName === "payment.captured") {
       const payment = payload?.payment?.entity;
-      if (!payment?.id || !payment?.order_id || !Number.isFinite(payment?.amount) || payment?.currency !== "INR") {
+      if (!payment?.id || !payment?.order_id || !Number.isFinite(payment?.amount) || payment?.currency !== "INR" || payment?.status !== "captured") {
         throw new ApiError(400, "Invalid captured payment payload");
       }
 
@@ -850,6 +896,30 @@ const handlePaymentWebhook = asyncHandler(async (req, res) => {
             : "Late payment received; refund processing has started";
       await PaymentWebhookEvent.updateOne({ eventId, status: "processing" }, { $set: { status: "processed", processedAt: new Date(), leaseExpiresAt: null } });
       return res.status(200).json(new ApiResponse(200, { received: true, bookingStatus: updated?.status, paymentStatus: updated?.paymentStatus }, webhookMessage));
+    } else if (eventName === "payment.failed") {
+      const payment = payload?.payment?.entity;
+      if (!payment?.id || !payment?.order_id || !Number.isFinite(payment?.amount) || payment?.currency !== "INR" || payment?.status !== "failed") {
+        throw new ApiError(400, "Invalid failed payment payload");
+      }
+      const booking = await Booking.findOne({ razorpayOrderId: payment.order_id });
+      if (!booking) throw new ApiError(404, "Booking for payment order not found");
+      if (payment.amount !== Math.round(booking.totalAmount * 100)) throw new ApiError(400, "Payment amount does not match booking total");
+
+      // A failed attempt is not necessarily a failed order. Reconcile every attempt
+      // before releasing the reservation so a captured or pending attempt wins.
+      if (booking.paymentStatus === "paid" || booking.status !== "pending" || booking.paymentStatus !== "pending") {
+        await PaymentWebhookEvent.updateOne({ eventId, status: "processing" }, { $set: { status: "processed", processedAt: new Date(), leaseExpiresAt: null } });
+        return res.status(200).json(new ApiResponse(200, { received: true, bookingStatus: booking.status, paymentStatus: booking.paymentStatus }, "Payment failure did not change the current booking state"));
+      }
+      const orderState = await resolveProviderPayment(booking);
+      if (orderState.state === "captured") {
+        const updated = await handleCapturedPaymentForOrder(booking, orderState.payment);
+        await PaymentWebhookEvent.updateOne({ eventId, status: "processing" }, { $set: { status: "processed", processedAt: new Date(), leaseExpiresAt: null } });
+        return res.status(200).json(new ApiResponse(200, { received: true, bookingStatus: updated?.status, paymentStatus: updated?.paymentStatus }, "Captured payment reconciled despite a failed payment attempt"));
+      }
+      if (orderState.state === "failed") await markPendingPaymentFailed(booking, payment);
+      await PaymentWebhookEvent.updateOne({ eventId, status: "processing" }, { $set: { status: "processed", processedAt: new Date(), leaseExpiresAt: null } });
+      return res.status(200).json(new ApiResponse(200, { received: true, bookingStatus: booking.status, paymentStatus: orderState.state === "failed" ? "failed" : "pending" }, orderState.state === "failed" ? "Definitive payment failure recorded" : "Payment remains pending; reservation retained"));
     }
 
     await PaymentWebhookEvent.updateOne(

@@ -65,6 +65,18 @@ const tripSchema = new mongoose.Schema(
     exclusions: [{ type: String, trim: true }],
     images: [{ type: String, trim: true }],
 
+    // Optional authored translations; English remains the canonical fallback.
+    translations: {
+      hi: {
+        title: { type: String, trim: true },
+        description: { type: String, trim: true },
+        destination: { type: String, trim: true },
+        itinerary: [{ day: Number, title: String, description: String }],
+        inclusions: [{ type: String, trim: true }],
+        exclusions: [{ type: String, trim: true }],
+      },
+    },
+
     basePrice: {
       type: Number,
       required: true,

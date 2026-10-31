@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { LanguageProvider } from './context/LanguageContext'
 import MainLayout from './layouts/MainLayout'
 import Home from './pages/Home'
 import Trips from './pages/Trips'
@@ -18,7 +19,7 @@ import { getAuthenticatedLandingPath } from './utils/authNavigation'
 function ProtectedRoute({ children, roles }) {
   const { isAuthenticated, loading, user } = useAuth()
   const location = useLocation()
-  if (loading) return <Loaders fullPage message="Checking your account…" />
+  if (loading) return <Loaders fullPage />
   if (!isAuthenticated) return <Navigate to="/login" replace state={{ from: location }} />
   if (roles && !roles.includes(user?.role)) return <Navigate to={getAuthenticatedLandingPath(user)} replace />
   return children
@@ -26,7 +27,7 @@ function ProtectedRoute({ children, roles }) {
 
 function GuestRoute({ children }) {
   const { isAuthenticated, loading, user } = useAuth()
-  if (loading) return <Loaders fullPage message="Checking your account…" />
+  if (loading) return <Loaders fullPage />
   if (isAuthenticated) return <Navigate to={getAuthenticatedLandingPath(user)} replace />
   return children
 }
@@ -51,7 +52,7 @@ function AppRoutes() {
 }
 
 function App() {
-  return <BrowserRouter><AuthProvider><AppRoutes /></AuthProvider></BrowserRouter>
+  return <BrowserRouter><LanguageProvider><AuthProvider><AppRoutes /></AuthProvider></LanguageProvider></BrowserRouter>
 }
 
 export default App

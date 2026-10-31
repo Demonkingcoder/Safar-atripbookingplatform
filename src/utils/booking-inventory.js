@@ -5,7 +5,7 @@ import { requireTransactionSupport, transactionUnavailableError } from "./transa
 import { createBookingNotificationOutboxRecord } from "./notification-outbox.js";
 
 /** Transition a booking and release its reserved seats as one database operation. */
-export async function transitionAndReleaseSeats({ bookingId, fromStatuses, set, now = new Date(), notification = null }) {
+export async function transitionAndReleaseSeats({ bookingId, fromStatuses, set, now = new Date(), notification = null, expected = {} }) {
   requireTransactionSupport();
   const session = await mongoose.startSession();
   let transitioned = null;
@@ -13,7 +13,7 @@ export async function transitionAndReleaseSeats({ bookingId, fromStatuses, set, 
     await session.withTransaction(async () => {
       transitioned = null;
       const booking = await Booking.findOneAndUpdate(
-        { _id: bookingId, status: { $in: fromStatuses }, seatsReleasedAt: null },
+        { _id: bookingId, status: { $in: fromStatuses }, seatsReleasedAt: null, ...expected },
         { $set: set },
         { new: true, session }
       );

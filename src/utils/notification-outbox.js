@@ -165,7 +165,7 @@ function requireRecipientAcceptance(result, recipientEmail) {
   const accepted = (result.accepted || []).some((recipient) => normalize(recipient) === email);
   const rejected = (result.rejected || []).some((recipient) => normalize(recipient) === email);
   if (rejected || !accepted) {
-    const error = new Error("SMTP did not accept the notification recipient");
+    const error = new Error("Brevo did not accept the notification recipient");
     error.code = "recipient_not_accepted";
     throw error;
   }
@@ -230,7 +230,7 @@ export async function processNotificationOutboxBatch({ mailSender = sendEmail, b
         const bookingQuery = Booking.findById(job.booking);
         const [user, booking] = await Promise.all([
           job.recipientEmail ? { email: job.recipientEmail, fullName: "Safar team" } : loadSelected(userQuery, "email fullName"),
-          loadSelected(bookingQuery, "trip departure bookingReference numberOfSeats totalAmount refundAmount cancellationReason"),
+          loadSelected(bookingQuery, "trip departure bookingReference numberOfSeats totalAmount refundAmount cancellationReason notificationLanguage razorpayPaymentId"),
         ]);
         if (!user?.email || !booking) {
           const completion = await NotificationOutbox.updateOne(
@@ -246,7 +246,7 @@ export async function processNotificationOutboxBatch({ mailSender = sendEmail, b
         }
         const [tripQuery, departureQuery] = [Trip.findById(booking.trip), Departure.findById(booking.departure)];
         const [trip, departure] = await Promise.all([
-          loadSelected(tripQuery, "title"),
+          loadSelected(tripQuery, "title slug translations"),
           loadSelected(departureQuery, "startDate"),
         ]);
         if (leaseLost) {
@@ -257,15 +257,19 @@ export async function processNotificationOutboxBatch({ mailSender = sendEmail, b
           processed += 1;
           continue;
         }
+        const notificationLanguage = job.type === "admin_booking_notification" ? "en" : booking.notificationLanguage === "hi" ? "hi" : "en";
         const message = buildBookingNotificationEmail({
           type: job.type,
           fullName: user.fullName,
-          tripTitle: trip?.title,
+          tripTitle: trip?.translations?.[notificationLanguage]?.title || trip?.title,
           bookingReference: booking.bookingReference || String(booking._id),
           numberOfSeats: booking.numberOfSeats,
           totalAmount: job.type.startsWith("refund_") ? (booking.refundAmount ?? booking.totalAmount) : booking.totalAmount,
           departureDate: departure?.startDate,
           reason: job.reason || booking.cancellationReason,
+          language: notificationLanguage,
+          paymentReference: booking.razorpayPaymentId,
+          tripSlug: trip?.slug,
         });
         const messageId = `<safar-${crypto.createHash("sha256").update(job.eventKey).digest("hex")}@notifications.safar>`;
         const delivery = await mailSender({ email: user.email, subject: message.subject, htmlContent: message.htmlContent, textContent: message.textContent, messageId });

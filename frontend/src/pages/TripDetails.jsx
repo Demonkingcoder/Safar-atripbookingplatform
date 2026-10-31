@@ -5,8 +5,12 @@ import { AnimatePresence, motion, useReducedMotion, useScroll, useTransform } fr
 import tripService from '../services/tripService'
 import Loaders from '../component/ui/Loaders'
 import formatCurrency from '../utils/formatCurrency'
+import { formatDate } from '../utils/formatDate'
+import { useLanguage } from '../context/LanguageContext'
+import { localizedApiError } from '../utils/localizedApiError'
 
 function TripDetails() {
+  const { t, language, locale } = useLanguage()
   const { slug } = useParams()
   const heroRef = useRef(null)
   const reduceMotion = useReducedMotion()
@@ -44,10 +48,7 @@ function TripDetails() {
         if (active) setTrip(result)
       } catch (err) {
         if (active) {
-          setError(
-            err.response?.data?.message ||
-              'Unable to load this trip. Please try again.'
-          )
+          setError(localizedApiError(err, t, 'trip.unavailable'))
         }
       } finally {
         if (active) setLoading(false)
@@ -62,18 +63,18 @@ function TripDetails() {
   }, [slug])
 
   if (loading) {
-    return <Loaders message="Preparing your journey..." fullPage />
+    return <Loaders message={t('common.loading')} fullPage />
   }
 
   if (error || !trip) {
     return (
       <main className="mx-auto min-h-[60vh] max-w-3xl px-5 py-20 text-center">
         <h1 className="font-heading text-3xl font-semibold text-forest">
-          We couldn't find this journey.
+          {t('trip.missing')}
         </h1>
 
         <p className="mt-4 text-sm text-charcoal/65">
-          {error || 'This trip may no longer be available.'}
+          {error || t('trip.unavailable')}
         </p>
 
         <div className="mt-7">
@@ -81,7 +82,7 @@ function TripDetails() {
             to="/trips"
             className="font-semibold text-forest underline underline-offset-4"
           >
-            Back to all trips
+            {t('trip.backTrips')}
           </Link>
         </div>
       </main>
@@ -93,7 +94,7 @@ function TripDetails() {
     : trip.images
 
   const price =
-    trip.basePrice ?? trip.price ??
+    trip.startingPrice ?? trip.basePrice ?? trip.price ??
     (typeof trip.pricing === 'number'
       ? trip.pricing
       : trip.pricing?.pricePerPerson ?? trip.pricing?.basePrice)
@@ -107,8 +108,13 @@ function TripDetails() {
     : []
 
   const itinerary = Array.isArray(trip.itinerary)
-    ? trip.itinerary
+    ? (trip.translations?.[language]?.itinerary?.length ? trip.translations[language].itinerary : trip.itinerary)
     : []
+  const title = trip.translations?.[language]?.title || trip.title
+  const description = trip.translations?.[language]?.description || trip.description
+  const destination = trip.translations?.[language]?.destination || trip.destination
+  const localizedInclusions = trip.translations?.[language]?.inclusions || inclusions
+  const localizedExclusions = trip.translations?.[language]?.exclusions || exclusions
 
   return (
     <main className="min-h-screen bg-ivory">
@@ -117,7 +123,7 @@ function TripDetails() {
         {imageUrl && (
           <motion.img
             src={imageUrl}
-            alt={trip.title || 'Trip destination'}
+            alt={title || t('trip.destinationFallback')}
             className="absolute inset-0 -z-20 h-full w-full object-cover"
             initial={reduceMotion ? false : { opacity: 0, scale: 1.08 }}
             animate={{ opacity: 1, scale: 1.04 }}
@@ -134,22 +140,22 @@ function TripDetails() {
             to="/trips"
             className="text-sm text-ivory/75 hover:text-white"
           >
-            ← All trips
+            ← {t('trip.allTrips')}
           </Link>
 
             <motion.h1 initial={reduceMotion ? false : { opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.72, delay: 0.1, ease: [0.22, 1, 0.36, 1] }} style={{ color: 'var(--color-ivory)' }} className="mt-8 max-w-4xl font-heading text-4xl font-semibold text-ivory sm:text-6xl">
-            {trip.title || 'Your next adventure'}
+            {title || t('trip.nextAdventure')}
           </motion.h1>
 
-          {trip.description && (
+          {description && (
             <motion.p initial={reduceMotion ? false : { opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.58, delay: 0.2 }} className="mt-5 max-w-2xl text-base leading-7 text-ivory/80">
-              {trip.description}
+              {description}
             </motion.p>
           )}
 
           <motion.div initial={reduceMotion ? false : { opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.3 }} className="mt-7 flex flex-wrap gap-4 text-sm text-ivory/80">
             {trip.duration && <span>{trip.duration}</span>}
-            {trip.destination && <span>{trip.destination}</span>}
+            {destination && <span>{destination}</span>}
           </motion.div>
           </motion.div>
         </div>
@@ -161,11 +167,11 @@ function TripDetails() {
           {itinerary.length > 0 && (
             <section>
               <h2 className="font-heading text-3xl font-semibold text-forest">
-                Your itinerary
+                {t('trip.itinerary')}
               </h2>
 
               <motion.div initial={reduceMotion ? false : { opacity: 0, y: 16 }} whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.2 }} transition={{ duration: 0.5 }} className="mt-6">
-                <div className="itinerary-tabs" role="tablist" aria-label="Choose an itinerary day">
+                <div className="itinerary-tabs" role="tablist" aria-label={t('trip.chooseDay')}>
                   {itinerary.map((day, index) => (
                     <button
                       key={day._id || day.day || index}
@@ -199,7 +205,7 @@ function TripDetails() {
                         transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
                         className="itinerary-day-panel rounded-b-2xl border border-t-0 border-forest/10 bg-white p-5 sm:p-7"
                       >
-                        <p className="text-xs font-bold uppercase tracking-[0.18em] text-terracotta-dark">Day {selectedDayIndex + 1}</p>
+                        <p className="text-xs font-bold uppercase tracking-[0.18em] text-terracotta-dark">{t('trip.day', { day: selectedDayIndex + 1 })}</p>
                         <h3 className="mt-2 font-heading text-2xl font-semibold text-forest">{day.title || day.heading || `Day ${selectedDayIndex + 1}`}</h3>
                         {(day.description || day.details) && <p className="mt-3 text-sm leading-7 text-charcoal/70">{day.description || day.details}</p>}
                         {activities.length > 0 && (
@@ -218,11 +224,11 @@ function TripDetails() {
           {inclusions.length > 0 && (
             <motion.section initial={reduceMotion ? false : { opacity: 0, y: 18 }} whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.25 }} transition={{ duration: 0.5 }}>
               <h2 className="font-heading text-3xl font-semibold text-forest">
-                What's included
+                {t('trip.included')}
               </h2>
 
               <ul className="mt-5 space-y-3">
-                {inclusions.map((item, index) => (
+                {localizedInclusions.map((item, index) => (
                   <motion.li key={index} initial={reduceMotion ? false : { opacity: 0, x: -8 }} whileInView={reduceMotion ? undefined : { opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ duration: 0.3, delay: index * 0.04 }} className="flex gap-3 text-sm text-charcoal/75">
                     <span className="text-forest" aria-hidden="true">✓</span>
                     {typeof item === 'string' ? item : item.title || item.name}
@@ -235,11 +241,11 @@ function TripDetails() {
           {exclusions.length > 0 && (
             <motion.section initial={reduceMotion ? false : { opacity: 0, y: 18 }} whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.25 }} transition={{ duration: 0.5 }}>
               <h2 className="font-heading text-3xl font-semibold text-forest">
-                What's not included
+                {t('trip.excluded')}
               </h2>
 
               <ul className="mt-5 space-y-3">
-                {exclusions.map((item, index) => (
+                {localizedExclusions.map((item, index) => (
                   <motion.li key={index} initial={reduceMotion ? false : { opacity: 0, x: -8 }} whileInView={reduceMotion ? undefined : { opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ duration: 0.3, delay: index * 0.04 }} className="flex gap-3 text-sm text-charcoal/75">
                     <span className="text-terracotta-dark" aria-hidden="true">×</span>
                     {typeof item === 'string' ? item : item.title || item.name}
@@ -252,18 +258,18 @@ function TripDetails() {
 
         {/* Booking summary */}
         <motion.aside initial={reduceMotion ? false : { opacity: 0, y: 18 }} whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.2 }} transition={{ duration: 0.5 }} className="h-fit rounded-2xl border border-forest/10 bg-white p-6 lg:sticky lg:top-28">
-          <p className="text-sm text-charcoal-light">Trip price</p>
+          <p className="text-sm text-charcoal-light">{trip.startingPriceSource === 'basePrice' ? t('trip.baseLabel') : t('trip.fullPrice')}</p>
 
           <motion.p initial={reduceMotion ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.32, duration: 0.4 }} className="mt-2 font-heading text-3xl font-semibold text-forest">
-            {price != null ? formatCurrency(price) : 'See departure options'}
+            {price != null ? formatCurrency(price, 'INR', locale) : t('trip.seeDepartures')}
           </motion.p>
 
           <p className="mt-1 text-xs text-charcoal-light">
-            Confirm the final price and availability before booking.
+            {trip.startingPriceSource === 'basePrice' ? t('trip.baseHint') : `${t('trip.perTraveller')} · ${trip.startingDepartureDate ? formatDate(trip.startingDepartureDate, {}, locale) : ''}`}
           </p>
 
           <Link to={`/trips/${slug}/book`} className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full bg-forest px-6 py-4 text-base font-bold text-white shadow-sm transition hover:bg-forest-dark focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-forest-light">
-            Choose a departure <span aria-hidden="true">↗</span>
+            {t('trip.chooseDeparture')} <span aria-hidden="true">↗</span>
           </Link>
         </motion.aside>
       </div>

@@ -83,7 +83,7 @@ test('outbox delivery retries with backoff and stores only a safe error code', a
   })
 })
 
-test('outbox does not mark a message sent when SMTP rejects its recipient', async () => {
+test('outbox does not mark a message sent when the email provider rejects its recipient', async () => {
   await withOutboxFixture(async () => {
     const fixture = installContentFixture()
     fixture.mailSender = async () => ({ accepted: [], rejected: ['traveler@example.test'] })

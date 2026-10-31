@@ -1,5 +1,6 @@
 
 import { motion, useReducedMotion } from 'motion/react'
+import { useLanguage } from '../../context/LanguageContext'
 
 const benefits = [
   {
@@ -26,6 +27,7 @@ const benefits = [
 ]
 
 function WhySafar() {
+  const { t } = useLanguage()
   const reduceMotion = useReducedMotion()
   return (
     <section
@@ -42,16 +44,15 @@ function WhySafar() {
           transition={{ duration: 0.58, ease: [0.22, 1, 0.36, 1] }}
         >
           <p className="mb-4 text-xs font-semibold uppercase tracking-[0.22em] text-terracotta-dark">
-            The Safar difference
+            {t('home.whyEyebrow')}
           </p>
 
           <h2 className="font-heading text-4xl font-semibold leading-tight text-forest sm:text-5xl">
-            Travel isn't just about where you go.
+            {t('story.whyTitle')}
           </h2>
 
           <p className="mt-5 text-base leading-7 text-charcoal/70">
-            It's about what you discover, who you meet, and the stories you
-            bring home.
+            {t('story.whyBody')}
           </p>
         </motion.div>
 
@@ -77,11 +78,11 @@ function WhySafar() {
               </div>
 
               <h3 className="mt-8 font-heading text-2xl font-semibold text-forest">
-                {benefit.title}
+                  {t(`story.benefit${Number(benefit.number)}`)}
               </h3>
 
               <p className="mt-4 text-sm leading-7 text-charcoal/70">
-                {benefit.description}
+                  {t(`story.benefit${Number(benefit.number)}Body`)}
               </p>
             </motion.article>
           ))}
