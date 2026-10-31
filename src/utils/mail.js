@@ -1,4 +1,3 @@
-
 import Mailgen from "mailgen";
 import nodemailer from "nodemailer";
 
@@ -11,37 +10,75 @@ function emailError(code, message) {
 }
 
 function validatedEmailAddress(value, code, label) {
-    if (typeof value !== "string") throw emailError(code, `${label} is invalid`);
+    if (typeof value !== "string") {
+        throw emailError(code, `${label} is invalid`);
+    }
+
     const address = value.trim();
+
     if (address.length > 320 || !emailPattern.test(address)) {
         throw emailError(code, `${label} is invalid`);
     }
+
     return address;
 }
 
 export function safeEmailErrorDetails(error) {
     const name = typeof error?.name === "string" ? error.name : "Error";
-    const code = typeof error?.code === "string" ? error.code : "email_delivery_failed";
+    const code =
+        typeof error?.code === "string"
+            ? error.code
+            : "email_delivery_failed";
+
     return {
-        errorName: /^[A-Za-z][A-Za-z0-9_.-]{0,39}$/.test(name) ? name : "Error",
-        errorCode: /^[A-Za-z0-9_-]{1,40}$/.test(code) ? code : "email_delivery_failed",
+        errorName: /^[A-Za-z][A-Za-z0-9_.-]{0,39}$/.test(name)
+            ? name
+            : "Error",
+        errorCode: /^[A-Za-z0-9_-]{1,40}$/.test(code)
+            ? code
+            : "email_delivery_failed",
     };
 }
 
 function validateSmtpConfiguration() {
-    if (!process.env.BREVO_SMTP_HOST?.trim()) throw emailError("smtp_host_missing", "SMTP host is not configured");
+    if (!process.env.BREVO_SMTP_HOST?.trim()) {
+        throw emailError(
+            "smtp_host_missing",
+            "SMTP host is not configured"
+        );
+    }
+
     const port = Number(process.env.BREVO_SMTP_PORT || 587);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) throw emailError("smtp_port_invalid", "SMTP port is invalid");
-    if (!process.env.BREVO_SMTP_USER?.trim()) throw emailError("smtp_login_missing", "SMTP login is not configured");
-    if (!process.env.BREVO_SMTP_PASS?.trim()) throw emailError("smtp_key_missing", "SMTP key is not configured");
-    validatedEmailAddress(process.env.BREVO_SENDER_EMAIL, "email_sender_invalid", "Email sender");
+
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw emailError("smtp_port_invalid", "SMTP port is invalid");
+    }
+
+    if (!process.env.BREVO_SMTP_USER?.trim()) {
+        throw emailError(
+            "smtp_login_missing",
+            "SMTP login is not configured"
+        );
+    }
+
+    if (!process.env.BREVO_SMTP_PASS?.trim()) {
+        throw emailError(
+            "smtp_key_missing",
+            "SMTP key is not configured"
+        );
+    }
+
+    validatedEmailAddress(
+        process.env.BREVO_SENDER_EMAIL,
+        "email_sender_invalid",
+        "Email sender"
+    );
 }
 
 const frontendUrl = (
     process.env.FRONTEND_URL || "http://localhost:5173"
 ).replace(/\/$/, "");
 
-// Generate HTML and plain-text email content
 const mailGenerator = new Mailgen({
     theme: "default",
     product: {
@@ -50,13 +87,16 @@ const mailGenerator = new Mailgen({
     },
 });
 
-// Configure Brevo SMTP
+// Brevo SMTP relay: port 587 with STARTTLS
+const smtpPort = Number(process.env.BREVO_SMTP_PORT || 587);
+
 const transporter = nodemailer.createTransport({
-    host: process.env.BREVO_SMTP_HOST,
-    port: Number(process.env.BREVO_SMTP_PORT || 587),
-    secure: Number(process.env.BREVO_SMTP_PORT || 587) === 465,
-    connectionTimeout: 10_000,
-    greetingTimeout: 10_000,
+    host: process.env.BREVO_SMTP_HOST || "smtp-relay.brevo.com",
+    port: smtpPort,
+    secure: smtpPort === 465, // false for 587; Nodemailer uses STARTTLS
+    requireTLS: smtpPort === 587,
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
     socketTimeout: 60_000,
     auth: {
         user: process.env.BREVO_SMTP_USER,
@@ -65,21 +105,44 @@ const transporter = nodemailer.createTransport({
 });
 
 // Send an email
-const sendEmail = async ({ email, subject, mailgenContent, htmlContent, textContent, messageId }) => {
+const sendEmail = async ({
+    email,
+    subject,
+    mailgenContent,
+    htmlContent,
+    textContent,
+    messageId,
+}) => {
     validateSmtpConfiguration();
-    const sender = validatedEmailAddress(process.env.BREVO_SENDER_EMAIL, "email_sender_invalid", "Email sender");
-    const recipient = validatedEmailAddress(email, "email_recipient_invalid", "Email recipient");
+
+    const sender = validatedEmailAddress(
+        process.env.BREVO_SENDER_EMAIL,
+        "email_sender_invalid",
+        "Email sender"
+    );
+
+    const recipient = validatedEmailAddress(
+        email,
+        "email_recipient_invalid",
+        "Email recipient"
+    );
 
     if (!subject || (!mailgenContent && (!htmlContent || !textContent))) {
-        throw emailError("email_content_missing", "Email subject and content are required");
+        throw emailError(
+            "email_content_missing",
+            "Email subject and content are required"
+        );
     }
 
-    const emailHtml = htmlContent || mailGenerator.generate(mailgenContent);
-    const emailText = textContent || mailGenerator.generatePlaintext(mailgenContent);
+    const emailHtml =
+        htmlContent || mailGenerator.generate(mailgenContent);
+
+    const emailText =
+        textContent || mailGenerator.generatePlaintext(mailgenContent);
 
     const result = await transporter.sendMail({
         from: {
-        name: "Safar",
+            name: "Safar",
             address: sender,
         },
         to: recipient,
@@ -90,15 +153,32 @@ const sendEmail = async ({ email, subject, mailgenContent, htmlContent, textCont
     });
 
     const accepted = (result?.accepted || []).some((entry) => {
-        const address = typeof entry === "string" ? entry : entry?.address;
-        return typeof address === "string" && address.trim().toLowerCase() === recipient.toLowerCase();
+        const address =
+            typeof entry === "string" ? entry : entry?.address;
+
+        return (
+            typeof address === "string" &&
+            address.trim().toLowerCase() === recipient.toLowerCase()
+        );
     });
-    if (!accepted || (result?.rejected || []).some((entry) => {
-        const address = typeof entry === "string" ? entry : entry?.address;
-        return typeof address === "string" && address.trim().toLowerCase() === recipient.toLowerCase();
-    })) {
-        throw emailError("recipient_not_accepted", "SMTP did not accept the recipient");
+
+    const rejected = (result?.rejected || []).some((entry) => {
+        const address =
+            typeof entry === "string" ? entry : entry?.address;
+
+        return (
+            typeof address === "string" &&
+            address.trim().toLowerCase() === recipient.toLowerCase()
+        );
+    });
+
+    if (!accepted || rejected) {
+        throw emailError(
+            "recipient_not_accepted",
+            "SMTP did not accept the recipient"
+        );
     }
+
     return result;
 };
 
@@ -109,10 +189,7 @@ const verifyEmailTransport = async () => {
 };
 
 // Email verification content
-const emailVerificationMailgenContent = (
-    fullName,
-    verificationUrl
-) => ({
+const emailVerificationMailgenContent = (fullName, verificationUrl) => ({
     body: {
         name: fullName,
         intro: "Welcome to Safar! We're excited to help you plan your next trip.",
@@ -131,10 +208,7 @@ const emailVerificationMailgenContent = (
 });
 
 // Forgot-password email content
-const forgotPasswordMailgenContent = (
-    fullName,
-    passwordResetUrl
-) => ({
+const forgotPasswordMailgenContent = (fullName, passwordResetUrl) => ({
     body: {
         name: fullName,
         intro:
@@ -153,15 +227,25 @@ const forgotPasswordMailgenContent = (
     },
 });
 
-const bookingConfirmationMailgenContent = (fullName, tripTitle, bookingReference) => ({
+const bookingConfirmationMailgenContent = (
+    fullName,
+    tripTitle,
+    bookingReference
+) => ({
     body: {
         name: fullName,
         intro: `Your booking for ${tripTitle} is confirmed. Your tickets are ready. Booking reference: ${bookingReference}.`,
-        outro: "Keep this reference for your trip and contact Safar if you need help.",
+        outro:
+            "Keep this reference for your trip and contact Safar if you need help.",
     },
 });
 
-const bookingCancellationMailgenContent = (fullName, tripTitle, reason, refundMessage) => ({
+const bookingCancellationMailgenContent = (
+    fullName,
+    tripTitle,
+    reason,
+    refundMessage
+) => ({
     body: {
         name: fullName,
         intro: `Your booking for ${tripTitle} has been cancelled.`,
@@ -169,7 +253,11 @@ const bookingCancellationMailgenContent = (fullName, tripTitle, reason, refundMe
     },
 });
 
-const departureCancellationMailgenContent = (fullName, tripTitle, reason) => ({
+const departureCancellationMailgenContent = (
+    fullName,
+    tripTitle,
+    reason
+) => ({
     body: {
         name: fullName,
         intro: `The scheduled departure for ${tripTitle} has been cancelled by Safar.`,
