@@ -1,5 +1,4 @@
 import Mailgen from "mailgen";
-import nodemailer from "nodemailer";
 
 const emailPattern = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
 
@@ -40,31 +39,11 @@ export function safeEmailErrorDetails(error) {
     };
 }
 
-function validateSmtpConfiguration() {
-    if (!process.env.BREVO_SMTP_HOST?.trim()) {
+function validateBrevoConfiguration() {
+    if (!process.env.BREVO_API_KEY?.trim()) {
         throw emailError(
-            "smtp_host_missing",
-            "SMTP host is not configured"
-        );
-    }
-
-    const port = Number(process.env.BREVO_SMTP_PORT || 587);
-
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        throw emailError("smtp_port_invalid", "SMTP port is invalid");
-    }
-
-    if (!process.env.BREVO_SMTP_USER?.trim()) {
-        throw emailError(
-            "smtp_login_missing",
-            "SMTP login is not configured"
-        );
-    }
-
-    if (!process.env.BREVO_SMTP_PASS?.trim()) {
-        throw emailError(
-            "smtp_key_missing",
-            "SMTP key is not configured"
+            "brevo_api_key_missing",
+            "Brevo API key is not configured"
         );
     }
 
@@ -87,24 +66,10 @@ const mailGenerator = new Mailgen({
     },
 });
 
-// Brevo SMTP relay: port 587 with STARTTLS
-const smtpPort = Number(process.env.BREVO_SMTP_PORT || 587);
+// Brevo HTTPS API — uses port 443, not SMTP ports.
+const BREVO_API_URL = "https://api.brevo.com/v3/smtp/email";
 
-const transporter = nodemailer.createTransport({
-    host: process.env.BREVO_SMTP_HOST || "smtp-relay.brevo.com",
-    port: smtpPort,
-    secure: smtpPort === 465, // false for 587; Nodemailer uses STARTTLS
-    requireTLS: smtpPort === 587,
-    connectionTimeout: 15_000,
-    greetingTimeout: 15_000,
-    socketTimeout: 60_000,
-    auth: {
-        user: process.env.BREVO_SMTP_USER,
-        pass: process.env.BREVO_SMTP_PASS,
-    },
-});
-
-// Send an email
+// Send an email through Brevo's HTTPS API.
 const sendEmail = async ({
     email,
     subject,
@@ -113,7 +78,7 @@ const sendEmail = async ({
     textContent,
     messageId,
 }) => {
-    validateSmtpConfiguration();
+    validateBrevoConfiguration();
 
     const sender = validatedEmailAddress(
         process.env.BREVO_SENDER_EMAIL,
@@ -140,52 +105,91 @@ const sendEmail = async ({
     const emailText =
         textContent || mailGenerator.generatePlaintext(mailgenContent);
 
-    const result = await transporter.sendMail({
-        from: {
-            name: "Safar",
-            address: sender,
+    const payload = {
+        sender: {
+            name: process.env.BREVO_SENDER_NAME?.trim() || "Safar",
+            email: sender,
         },
-        to: recipient,
+        to: [{ email: recipient }],
         subject,
-        text: emailText,
-        html: emailHtml,
-        ...(messageId ? { messageId } : {}),
-    });
+        htmlContent: emailHtml,
+        textContent: emailText,
+    };
 
-    const accepted = (result?.accepted || []).some((entry) => {
-        const address =
-            typeof entry === "string" ? entry : entry?.address;
+    // Brevo supports a custom header for message tracking/correlation.
+    if (messageId) {
+        payload.headers = {
+            "X-Safar-Message-Id": String(messageId),
+        };
+    }
 
-        return (
-            typeof address === "string" &&
-            address.trim().toLowerCase() === recipient.toLowerCase()
-        );
-    });
+    let response;
 
-    const rejected = (result?.rejected || []).some((entry) => {
-        const address =
-            typeof entry === "string" ? entry : entry?.address;
+    try {
+        response = await fetch(BREVO_API_URL, {
+            method: "POST",
+            headers: {
+                "api-key": process.env.BREVO_API_KEY,
+                accept: "application/json",
+                "content-type": "application/json",
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(20_000),
+        });
+    } catch (error) {
+        if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+            throw emailError(
+                "brevo_api_timeout",
+                "Brevo email API request timed out"
+            );
+        }
 
-        return (
-            typeof address === "string" &&
-            address.trim().toLowerCase() === recipient.toLowerCase()
-        );
-    });
-
-    if (!accepted || rejected) {
         throw emailError(
-            "recipient_not_accepted",
-            "SMTP did not accept the recipient"
+            "brevo_api_network_error",
+            "Could not connect to Brevo email API"
         );
     }
 
-    return result;
+    if (!response.ok) {
+        // Do not expose Brevo's raw response, which may contain internal details.
+        const statusCode = response.status;
+
+        let errorCode = "brevo_api_error";
+
+        if (statusCode === 400) {
+            errorCode = "brevo_request_invalid";
+        } else if (statusCode === 401 || statusCode === 403) {
+            errorCode = "brevo_api_auth_failed";
+        } else if (statusCode === 429) {
+            errorCode = "brevo_rate_limited";
+        } else if (statusCode >= 500) {
+            errorCode = "brevo_api_unavailable";
+        }
+
+        const error = emailError(
+            errorCode,
+            `Brevo email API returned status ${statusCode}`
+        );
+
+        error.statusCode = statusCode;
+        throw error;
+    }
+
+    const result = await response.json();
+
+    // A successful API response means Brevo accepted the email for processing.
+    return {
+        accepted: [recipient],
+        rejected: [],
+        messageId: result?.messageId,
+        response: "Accepted by Brevo",
+    };
 };
 
-// Verify SMTP configuration and connectivity
+// Validate API configuration without sending a test email.
 const verifyEmailTransport = async () => {
-    validateSmtpConfiguration();
-    return transporter.verify();
+    validateBrevoConfiguration();
+    return true;
 };
 
 // Email verification content
