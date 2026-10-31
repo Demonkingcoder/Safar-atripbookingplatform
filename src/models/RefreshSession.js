@@ -5,6 +5,8 @@ const refreshSessionSchema = new mongoose.Schema({
   familyId: { type: String, required: true, index: true },
   tokenHash: { type: String, required: true, unique: true },
   previousTokenHashes: { type: [String], default: [] },
+  lastRotatedFromHash: { type: String, default: null },
+  lastRotatedAt: { type: Date, default: null },
   lastActivityAt: { type: Date, required: true },
   expiresAt: { type: Date, required: true, index: true },
   absoluteExpiresAt: { type: Date, required: true },

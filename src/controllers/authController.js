@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 
 import {
     sendEmail,
+    safeEmailErrorDetails,
     emailVerificationMailgenContent,
     forgotPasswordMailgenContent,
 } from "../utils/mail.js";
@@ -18,6 +19,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { cookieClearOptions, cookieOptions, tokenLifetimes, verifyTokenClaims } from "../utils/token-policy.js";
 
 const hashRefreshToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
+const CONCURRENT_REFRESH_GRACE_MS = 5_000;
 
 function verifySignedToken(token, secret, tokenType, ignoreExpiration = false) {
     if (!secret) throw new ApiError(500, "Authentication token secret is not configured");
@@ -64,6 +66,31 @@ function setSessionCookies(res, tokens) {
     return res
         .cookie("accessToken", tokens.accessToken, cookieOptions(tokenLifetimes.accessSeconds * 1000))
         .cookie("refreshToken", tokens.refreshToken, cookieOptions(tokens.refreshMaxAge));
+}
+
+async function issueConcurrentRefreshGrace(session, incomingHash, res, now = new Date()) {
+    const rotatedAt = session?.lastRotatedAt ? new Date(session.lastRotatedAt) : null;
+    const age = rotatedAt ? now.getTime() - rotatedAt.getTime() : Number.POSITIVE_INFINITY;
+    if (!session || session.revokedAt || session.lastRotatedFromHash !== incomingHash
+        || age < 0 || age > CONCURRENT_REFRESH_GRACE_MS
+        || session.expiresAt <= now || session.absoluteExpiresAt <= now) return null;
+
+    const user = await User.findById(session.user);
+    if (!user) throw new ApiError(401, "User not found or refresh token is invalid");
+    if (!user.isActive) {
+        await revokeRefreshFamily(session, "account-disabled");
+        throw new ApiError(403, "Your account is disabled");
+    }
+    if (!user.isEmailVerified) {
+        await revokeRefreshFamily(session, "email-unverified");
+        throw new ApiError(403, "Please verify your email before continuing");
+    }
+
+    // The winning request already rotated the HttpOnly refresh cookie. Return only a
+    // fresh access cookie here so the losing concurrent response cannot overwrite it.
+    return res.status(200)
+        .cookie("accessToken", user.generateAccessToken({ sid: String(session._id), fid: session.familyId }), cookieOptions(tokenLifetimes.accessSeconds * 1000))
+        .json(new ApiResponse(200, {}, "Access token refreshed successfully"));
 }
 
 async function revokeRefreshFamily(session, reason, now = new Date()) {
@@ -132,7 +159,7 @@ const sendVerificationEmail = async (user, verificationToken) => {
     const verificationUrl =
         `${frontendUrl}/verify-email/${verificationToken}`;
 
-    const delivery = await sendEmail({
+    await sendEmail({
         email: user.email,
         subject: "Verify your Bhupee email",
         mailgenContent: emailVerificationMailgenContent(
@@ -140,18 +167,15 @@ const sendVerificationEmail = async (user, verificationToken) => {
             verificationUrl
         ),
     });
-    const acceptedRecipients = Array.isArray(delivery?.accepted)
-        ? delivery.accepted
-        : [];
-    const recipientAccepted = acceptedRecipients.some((recipient) => {
-        const address = typeof recipient === "string" ? recipient : recipient?.address;
-        return address?.toLowerCase() === user.email.toLowerCase();
-    });
-
-    if (!recipientAccepted) {
-        throw new Error("Verification email recipient was not accepted for sending");
-    }
 };
+
+function logEmailFailure(event, error, req) {
+    const requestId = typeof req?.requestId === "string" ? req.requestId : undefined;
+    console.error(`Safar ${event} failed`, JSON.stringify({
+        ...(requestId ? { requestId } : {}),
+        ...safeEmailErrorDetails(error),
+    }));
+}
 
 // Register user
 export const registerUser = asyncHandler(async (req, res) => {
@@ -200,7 +224,7 @@ export const registerUser = asyncHandler(async (req, res) => {
     try {
         await sendVerificationEmail(user, verificationToken);
     } catch (error) {
-        console.error("Verification email failed:", error.message);
+        logEmailFailure("verification email", error, req);
 
         // Keep the account so the user can request another email.
         throw new ApiError(
@@ -359,21 +383,22 @@ export const resendVerificationEmail = asyncHandler(async (req, res) => {
         expiry,
     } = generateEmailVerificationToken();
 
-    user.emailVerificationToken = hashedToken;
-    user.emailVerificationExpiry = expiry;
-
-    await user.save({ validateBeforeSave: false });
-
     try {
         await sendVerificationEmail(user, verificationToken);
     } catch (error) {
-        console.error("Resend verification failed:", error.message);
+        logEmailFailure("resend verification email", error, req);
 
         throw new ApiError(
             503,
             "Unable to send verification email right now. Please try again later."
         );
     }
+
+    // Rotate the persisted token only after SMTP accepts the recipient. A failed
+    // resend therefore leaves the previously stored verification link usable.
+    user.emailVerificationToken = hashedToken;
+    user.emailVerificationExpiry = expiry;
+    await user.save({ validateBeforeSave: false });
 
     return res.status(200).json(
         new ApiResponse(200, {}, successMessage)
@@ -407,6 +432,8 @@ export const refreshAccessToken = asyncHandler(async (req, res) => {
     if (session.revokedAt) throw new ApiError(401, "Refresh token is invalid or revoked");
     if (session.tokenHash !== incomingHash) {
         if (session.previousTokenHashes.includes(incomingHash)) {
+            const graceResponse = await issueConcurrentRefreshGrace(session, incomingHash, res);
+            if (graceResponse) return graceResponse;
             await revokeRefreshFamily(session, "refresh-token-reuse");
             throw new ApiError(401, "Refresh token reuse detected; the session was revoked");
         }
@@ -439,13 +466,15 @@ export const refreshAccessToken = asyncHandler(async (req, res) => {
     const nextHash = hashRefreshToken(nextRefreshToken);
     const rotated = await RefreshSession.findOneAndUpdate(
         { _id: session._id, tokenHash: incomingHash, revokedAt: null, expiresAt: { $gt: now }, absoluteExpiresAt: { $gt: now } },
-        { $set: { tokenHash: nextHash, expiresAt: nextExpiry, lastActivityAt: now }, $push: { previousTokenHashes: incomingHash } },
+        { $set: { tokenHash: nextHash, expiresAt: nextExpiry, lastActivityAt: now, lastRotatedFromHash: incomingHash, lastRotatedAt: now }, $push: { previousTokenHashes: incomingHash } },
         { new: true }
     );
 
     if (!rotated) {
         const latestSession = await RefreshSession.findById(session._id);
         if (latestSession && latestSession.previousTokenHashes.includes(incomingHash)) {
+            const graceResponse = await issueConcurrentRefreshGrace(latestSession, incomingHash, res);
+            if (graceResponse) return graceResponse;
             await revokeRefreshFamily(latestSession, "refresh-token-reuse");
             throw new ApiError(401, "Refresh token reuse detected; the session was revoked");
         }

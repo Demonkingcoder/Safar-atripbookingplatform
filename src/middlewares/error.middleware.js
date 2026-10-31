@@ -16,12 +16,33 @@ export const errorHandler = (err, req, res, next) => {
         );
     }
 
+    const requestId = req.requestId || "unknown";
+    const isProduction = process.env.NODE_ENV === "production";
+    const isServerError = error.statusCode >= 500;
+
+    if (isServerError) {
+        const route = req.route?.path;
+        const rawCode = err?.code;
+        const errorCode = typeof rawCode === "number"
+            ? rawCode
+            : (typeof rawCode === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(rawCode) ? rawCode : undefined);
+        console.error("Safar request failed", JSON.stringify({
+            requestId,
+            method: typeof req.method === "string" ? req.method.slice(0, 12) : "unknown",
+            route: typeof route === "string" ? route.slice(0, 120) : "unmatched",
+            statusCode: error.statusCode,
+            errorName: typeof err?.name === "string" ? err.name.replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 60) : "Error",
+            ...(errorCode !== undefined ? { errorCode } : {}),
+        }));
+    }
+
     const response = {
         statusCode: error.statusCode,
         data: null,
-        message: error.message,
+        message: isProduction && isServerError ? "Internal Server Error" : error.message,
         success: false,
-        errors: error.errors,
+        errors: isProduction && isServerError ? [] : error.errors,
+        requestId,
         ...(process.env.NODE_ENV === "development" ? { stack: error.stack } : {})
     };
 

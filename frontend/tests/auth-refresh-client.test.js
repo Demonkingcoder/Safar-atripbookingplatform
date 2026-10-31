@@ -19,6 +19,51 @@ test('simultaneous failed requests share a single refresh operation', async () =
   assert.equal(refreshCount, 1)
 })
 
+test('separate tabs serialize refreshes through the shared browser lock', async () => {
+  let refreshCount = 0
+  let activeRefreshes = 0
+  let maxActiveRefreshes = 0
+  let releaseRefresh
+  let lockTail = Promise.resolve()
+  const locks = {
+    async request(_name, _options, callback) {
+      const previous = lockTail
+      let releaseLock
+      lockTail = new Promise((resolve) => { releaseLock = resolve })
+      await previous
+      try { return await callback() } finally { releaseLock() }
+    },
+  }
+  const refresh = async () => {
+    refreshCount += 1
+    activeRefreshes += 1
+    maxActiveRefreshes = Math.max(maxActiveRefreshes, activeRefreshes)
+    await new Promise((resolve) => { releaseRefresh = resolve })
+    activeRefreshes -= 1
+    return { ok: true }
+  }
+  const tabOne = createRefreshCoordinator(refresh, null, { locks })
+  const tabTwo = createRefreshCoordinator(refresh, null, { locks })
+  const first = tabOne()
+  const second = tabTwo()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(refreshCount, 1)
+  assert.equal(maxActiveRefreshes, 1)
+  releaseRefresh()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(refreshCount, 2)
+  releaseRefresh()
+  await Promise.all([first, second])
+  assert.equal(maxActiveRefreshes, 1)
+})
+
+test('refresh falls back to the server-side race protection when Web Locks are unavailable', async () => {
+  let refreshCount = 0
+  const refreshOnce = createRefreshCoordinator(async () => { refreshCount += 1 }, null, { locks: null })
+  await refreshOnce()
+  assert.equal(refreshCount, 1)
+})
+
 test('refresh failure is shared, clears state once, and does not loop on the refresh request', async () => {
   let refreshCount = 0
   let failureCount = 0

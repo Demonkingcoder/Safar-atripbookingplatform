@@ -9,12 +9,21 @@ export function canRefreshRequest(error) {
     && !authEndpointsWithoutSessionRetry.test(config.url || '')
 }
 
-export function createRefreshCoordinator(refresh, onFailure) {
+export function createRefreshCoordinator(refresh, onFailure, {
+  locks = globalThis.navigator?.locks,
+  lockName = 'safar-auth-refresh',
+} = {}) {
   let refreshInFlight = null
+  const refreshWithCrossTabLock = () => (
+    typeof locks?.request === 'function'
+      ? locks.request(lockName, { mode: 'exclusive' }, refresh)
+      : refresh()
+  )
+
   return function refreshOnce() {
     if (!refreshInFlight) {
       refreshInFlight = Promise.resolve()
-        .then(refresh)
+        .then(refreshWithCrossTabLock)
         .catch((error) => {
           onFailure?.(error)
           throw error

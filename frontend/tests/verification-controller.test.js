@@ -162,7 +162,7 @@ test('resend for an already verified account returns the generic response withou
   })
 })
 
-test('resend for an unverified account refreshes the stored token and reports unavailable SMTP safely', async () => {
+test('resend preserves the stored verification token when SMTP configuration is unavailable', async () => {
   assert.equal(process.env.BREVO_SENDER_EMAIL, undefined, 'test must not be able to send real email')
 
   let saveCalls = 0
@@ -178,7 +178,8 @@ test('resend for an unverified account refreshes the stored token and reports un
     },
   }
   const originalConsoleError = console.error
-  console.error = () => {}
+  const logs = []
+  console.error = (...args) => logs.push(args.join(' '))
 
   try {
     await withFindOne(async (query) => {
@@ -187,14 +188,17 @@ test('resend for an unverified account refreshes the stored token and reports un
     }, async () => {
       const result = await invoke(resendVerificationEmail, {
         body: { email: 'Traveler@Example.Test' },
+        requestId: 'resend-config-request-id',
       })
 
       assert.equal(result.error?.statusCode, 503)
       assert.match(result.error.message, /unable to send verification email/i)
-      assert.match(user.emailVerificationToken, /^[a-f0-9]{64}$/)
-      assert.ok(user.emailVerificationExpiry.getTime() > Date.now())
-      assert.equal(saveCalls, 1)
+      assert.equal(user.emailVerificationToken, 'old-hash')
+      assert.equal(user.emailVerificationExpiry.getTime(), 0)
+      assert.equal(saveCalls, 0)
     })
+    assert.match(logs.join('\n'), /resend-config-request-id/)
+    assert.doesNotMatch(logs.join('\n'), /not configured|traveler@example\.test/i)
   } finally {
     console.error = originalConsoleError
   }

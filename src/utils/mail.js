@@ -2,6 +2,41 @@
 import Mailgen from "mailgen";
 import nodemailer from "nodemailer";
 
+const emailPattern = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+
+function emailError(code, message) {
+    const error = new Error(message);
+    error.code = code;
+    return error;
+}
+
+function validatedEmailAddress(value, code, label) {
+    if (typeof value !== "string") throw emailError(code, `${label} is invalid`);
+    const address = value.trim();
+    if (address.length > 320 || !emailPattern.test(address)) {
+        throw emailError(code, `${label} is invalid`);
+    }
+    return address;
+}
+
+export function safeEmailErrorDetails(error) {
+    const name = typeof error?.name === "string" ? error.name : "Error";
+    const code = typeof error?.code === "string" ? error.code : "email_delivery_failed";
+    return {
+        errorName: /^[A-Za-z][A-Za-z0-9_.-]{0,39}$/.test(name) ? name : "Error",
+        errorCode: /^[A-Za-z0-9_-]{1,40}$/.test(code) ? code : "email_delivery_failed",
+    };
+}
+
+function validateSmtpConfiguration() {
+    if (!process.env.BREVO_SMTP_HOST?.trim()) throw emailError("smtp_host_missing", "SMTP host is not configured");
+    const port = Number(process.env.BREVO_SMTP_PORT || 587);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw emailError("smtp_port_invalid", "SMTP port is invalid");
+    if (!process.env.BREVO_SMTP_USER?.trim()) throw emailError("smtp_login_missing", "SMTP login is not configured");
+    if (!process.env.BREVO_SMTP_PASS?.trim()) throw emailError("smtp_key_missing", "SMTP key is not configured");
+    validatedEmailAddress(process.env.BREVO_SENDER_EMAIL, "email_sender_invalid", "Email sender");
+}
+
 const frontendUrl = (
     process.env.FRONTEND_URL || "http://localhost:5173"
 ).replace(/\/$/, "");
@@ -31,34 +66,45 @@ const transporter = nodemailer.createTransport({
 
 // Send an email
 const sendEmail = async ({ email, subject, mailgenContent, htmlContent, textContent, messageId }) => {
-    if (!process.env.BREVO_SENDER_EMAIL) {
-        throw new Error("BREVO_SENDER_EMAIL is not configured");
-    }
+    validateSmtpConfiguration();
+    const sender = validatedEmailAddress(process.env.BREVO_SENDER_EMAIL, "email_sender_invalid", "Email sender");
+    const recipient = validatedEmailAddress(email, "email_recipient_invalid", "Email recipient");
 
-    if (!email || !subject || (!mailgenContent && (!htmlContent || !textContent))) {
-        throw new Error(
-            "Email recipient, subject, and content are required"
-        );
+    if (!subject || (!mailgenContent && (!htmlContent || !textContent))) {
+        throw emailError("email_content_missing", "Email subject and content are required");
     }
 
     const emailHtml = htmlContent || mailGenerator.generate(mailgenContent);
     const emailText = textContent || mailGenerator.generatePlaintext(mailgenContent);
 
-    return transporter.sendMail({
+    const result = await transporter.sendMail({
         from: {
         name: "Safar",
-            address: process.env.BREVO_SENDER_EMAIL,
+            address: sender,
         },
-        to: email,
+        to: recipient,
         subject,
         text: emailText,
         html: emailHtml,
         ...(messageId ? { messageId } : {}),
     });
+
+    const accepted = (result?.accepted || []).some((entry) => {
+        const address = typeof entry === "string" ? entry : entry?.address;
+        return typeof address === "string" && address.trim().toLowerCase() === recipient.toLowerCase();
+    });
+    if (!accepted || (result?.rejected || []).some((entry) => {
+        const address = typeof entry === "string" ? entry : entry?.address;
+        return typeof address === "string" && address.trim().toLowerCase() === recipient.toLowerCase();
+    })) {
+        throw emailError("recipient_not_accepted", "SMTP did not accept the recipient");
+    }
+    return result;
 };
 
 // Verify SMTP configuration and connectivity
 const verifyEmailTransport = async () => {
+    validateSmtpConfiguration();
     return transporter.verify();
 };
 

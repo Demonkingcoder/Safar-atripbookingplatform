@@ -7,6 +7,7 @@
     "dev": "nodemon src/bserver.js",
     "start": "node src/bserver.js",
     "worker": "node src/worker.js",
+    "verify:smtp": "node src/scripts/verify-smtp.js",
     "preflight:indexes": "node src/scripts/preflight-indexes.js",
     "test": "node --test frontend/tests/*.test.js"
   },

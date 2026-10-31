@@ -6,8 +6,11 @@ import User from '../../src/models/User.js'
 import RefreshSession from '../../src/models/RefreshSession.js'
 
 let rejectRecipient = false
+let rejectAuthentication = false
 let capturedMessage = ''
+let smtpConnectionCount = 0
 const smtpServer = net.createServer((socket) => {
+  smtpConnectionCount += 1
   socket.setEncoding('utf8')
   socket.write('220 safar-test-smtp ESMTP\r\n')
   let buffer = ''
@@ -28,7 +31,17 @@ const smtpServer = net.createServer((socket) => {
           capturedMessage += `${line}\r\n`
         }
       } else if (/^(EHLO|HELO) /i.test(line)) {
-        socket.write('250-safar-test-smtp\r\n250-8BITMIME\r\n250 SMTPUTF8\r\n')
+        socket.write('250-safar-test-smtp\r\n250-8BITMIME\r\n250-AUTH PLAIN LOGIN\r\n250 SMTPUTF8\r\n')
+      } else if (/^AUTH PLAIN(?:\s|$)/i.test(line)) {
+        socket.write(rejectAuthentication
+          ? '535 5.7.8 authentication rejected for test\r\n'
+          : '235 2.7.0 authentication accepted\r\n')
+      } else if (/^AUTH LOGIN$/i.test(line)) {
+        socket.write('334 VXNlcm5hbWU6\r\n')
+      } else if (/^(?:[A-Za-z0-9+/]+=*)$/i.test(line) && line.length > 8) {
+        socket.write(rejectAuthentication
+          ? '535 5.7.8 authentication rejected for test\r\n'
+          : '235 2.7.0 authentication accepted\r\n')
       } else if (/^MAIL FROM:/i.test(line)) {
         socket.write('250 2.1.0 sender accepted\r\n')
       } else if (/^RCPT TO:/i.test(line)) {
@@ -58,10 +71,11 @@ await new Promise((resolve, reject) => {
 process.env.BREVO_SENDER_EMAIL = 'sender@example.test'
 process.env.BREVO_SMTP_HOST = '127.0.0.1'
 process.env.BREVO_SMTP_PORT = String(smtpServer.address().port)
-delete process.env.BREVO_SMTP_USER
-delete process.env.BREVO_SMTP_PASS
+process.env.BREVO_SMTP_USER = 'smtp-login-test-only'
+process.env.BREVO_SMTP_PASS = 'smtp-key-test-only'
 
 const { registerUser, resendVerificationEmail, forgotPassword, resetPassword } = await import('../../src/controllers/authController.js')
+const { sendEmail, verifyEmailTransport } = await import('../../src/utils/mail.js')
 
 after(() => new Promise((resolve) => smtpServer.close(resolve)))
 
@@ -92,7 +106,10 @@ async function withUserStubs({ existingUser = null, createdUser = null }, run) {
   const originalCreate = User.create
   const originalFindById = User.findById
   User.findOne = async () => existingUser
-  User.create = async () => createdUser
+  User.create = async (record) => {
+    if (createdUser) Object.assign(createdUser, record)
+    return createdUser
+  }
   User.findById = () => ({ select: async () => createdUser })
   try {
     await run()
@@ -126,15 +143,22 @@ test('registration keeps the created account and returns an email-send error whe
   rejectRecipient = true
   const createdUser = { ...registrationBody, _id: 'test-user-id', isEmailVerified: false }
   const originalConsoleError = console.error
-  console.error = () => {}
+  const logs = []
+  console.error = (...args) => logs.push(args.join(' '))
 
   try {
     await withUserStubs({ createdUser }, async () => {
-      const result = await invoke(registerUser, { body: registrationBody })
+      const result = await invoke(registerUser, { body: registrationBody, requestId: 'register-request-id' })
       assert.equal(result.error?.statusCode, 503)
       assert.match(result.error?.message, /account created, but the verification email could not be sent/i)
+      assert.doesNotMatch(result.error.message, /recipient rejected|smtp-key-test-only|smtp-login-test-only/i)
       assert.equal(createdUser.isEmailVerified, false)
+      assert.match(createdUser.emailVerificationToken, /^[a-f0-9]{64}$/)
+      assert.ok(createdUser.emailVerificationExpiry instanceof Date)
+      assert.equal(JSON.stringify(result.error).includes('recipient rejected for test'), false)
     })
+    assert.match(logs.join('\n'), /register-request-id/)
+    assert.doesNotMatch(logs.join('\n'), /recipient rejected for test|smtp-key-test-only|traveler@example\.test/i)
   } finally {
     console.error = originalConsoleError
     rejectRecipient = false
@@ -165,6 +189,7 @@ test('resend uses the existing verification route and reports success after SMTP
   rejectRecipient = false
   let saved = false
   const user = {
+    _id: 'resend-success-user',
     email: registrationBody.email,
     fullName: registrationBody.fullName,
     isEmailVerified: false,
@@ -180,6 +205,74 @@ test('resend uses the existing verification route and reports success after SMTP
     assert.equal(saved, true)
   } finally {
     User.findOne = originalFindOne
+  }
+})
+
+test('resend SMTP failure preserves the prior verification token and logs only safe details', async () => {
+  rejectRecipient = true
+  const priorExpiry = new Date('2027-01-01T00:00:00.000Z')
+  const user = {
+    _id: 'resend-failure-user',
+    email: registrationBody.email,
+    fullName: registrationBody.fullName,
+    isEmailVerified: false,
+    emailVerificationToken: 'previous-token-hash',
+    emailVerificationExpiry: priorExpiry,
+    saveCalls: 0,
+    async save() { this.saveCalls += 1 },
+  }
+  const originalFindOne = User.findOne
+  const originalConsoleError = console.error
+  const logs = []
+  User.findOne = async () => user
+  console.error = (...args) => logs.push(args.join(' '))
+  try {
+    const result = await invoke(resendVerificationEmail, {
+      body: { email: registrationBody.email },
+      requestId: 'resend-request-id',
+    })
+    assert.equal(result.error?.statusCode, 503)
+    assert.match(result.error.message, /unable to send verification email/i)
+    assert.doesNotMatch(result.error.message, /recipient rejected|smtp-key-test-only|smtp-login-test-only/i)
+    assert.equal(user.emailVerificationToken, 'previous-token-hash')
+    assert.equal(user.emailVerificationExpiry, priorExpiry)
+    assert.equal(user.saveCalls, 0)
+    assert.equal(JSON.stringify(result.error).includes('recipient rejected for test'), false)
+    assert.match(logs.join('\n'), /resend-request-id/)
+    assert.doesNotMatch(logs.join('\n'), /recipient rejected for test|smtp-key-test-only|traveler@example\.test/i)
+  } finally {
+    User.findOne = originalFindOne
+    console.error = originalConsoleError
+    rejectRecipient = false
+  }
+})
+
+test('SMTP verification succeeds and reports authentication failure without leaking provider text', async () => {
+  assert.equal(await verifyEmailTransport(), true)
+
+  rejectAuthentication = true
+  try {
+    await assert.rejects(verifyEmailTransport(), (error) => {
+      assert.equal(typeof error.code, 'string')
+      assert.doesNotMatch(error.message, /smtp-key-test-only|smtp-login-test-only/)
+      return true
+    })
+  } finally {
+    rejectAuthentication = false
+  }
+})
+
+test('invalid sender or recipient is rejected before opening an SMTP connection', async () => {
+  const originalSender = process.env.BREVO_SENDER_EMAIL
+  const connectionsBefore = smtpConnectionCount
+  process.env.BREVO_SENDER_EMAIL = 'not-an-email'
+  try {
+    await assert.rejects(sendEmail({ email: 'traveler@example.test', subject: 'test', textContent: 'test', htmlContent: '<p>test</p>' }), { code: 'email_sender_invalid' })
+    process.env.BREVO_SENDER_EMAIL = originalSender
+    await assert.rejects(sendEmail({ email: 'bad-recipient', subject: 'test', textContent: 'test', htmlContent: '<p>test</p>' }), { code: 'email_recipient_invalid' })
+    assert.equal(smtpConnectionCount, connectionsBefore)
+  } finally {
+    process.env.BREVO_SENDER_EMAIL = originalSender
   }
 })
 

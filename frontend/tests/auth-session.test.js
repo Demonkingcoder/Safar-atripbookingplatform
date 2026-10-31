@@ -166,10 +166,58 @@ test('refresh rotates the token; reuse of a rotated token revokes its session fa
     assert.equal(session.tokenHash, sha256(newToken))
     assert.ok(session.previousTokenHashes.includes(sha256(oldToken)))
 
+    session.lastRotatedAt = new Date(Date.now() - 6_000)
     const reuse = await invoke(refreshAccessToken, { cookies: { refreshToken: oldToken } })
     assert.equal(reuse.error?.statusCode, 401)
     assert.equal(revokeCount, 1)
     assert.equal(session.revocationReason, 'refresh-token-reuse')
+  })
+})
+
+test('simultaneous refresh requests return a usable access cookie without revoking the rotated session', async () => {
+  const user = makeUser()
+  const sessionId = '64b000000000000000000015'
+  const familyId = 'family-concurrent'
+  const oldToken = jwt.sign({ _id: userId, sid: sessionId, fid: familyId, jti: 'jti-concurrent', token_use: 'refresh' }, process.env.REFRESH_TOKEN_SECRET, { expiresIn: 3600 })
+  const session = {
+    _id: sessionId,
+    user: userId,
+    familyId,
+    tokenHash: sha256(oldToken),
+    previousTokenHashes: [],
+    expiresAt: new Date(Date.now() + 3600000),
+    absoluteExpiresAt: new Date(Date.now() + 6 * 86400000),
+    revokedAt: null,
+  }
+  let readCount = 0
+  let revokeCount = 0
+  await withOverrides([
+    { model: User, methods: { async findById() { return user } } },
+    { model: RefreshSession, methods: {
+      async findById() {
+        readCount += 1
+        return structuredClone(session)
+      },
+      async findOneAndUpdate(filter, update) {
+        if (session.tokenHash !== filter.tokenHash) return null
+        session.previousTokenHashes.push(update.$push.previousTokenHashes)
+        Object.assign(session, update.$set)
+        return structuredClone(session)
+      },
+      async updateMany(filter, update) { revokeCount += 1; Object.assign(session, update.$set); return { modifiedCount: 1 } },
+    } },
+  ], async () => {
+    const [first, second] = await Promise.all([
+      invoke(refreshAccessToken, { cookies: { refreshToken: oldToken } }),
+      invoke(refreshAccessToken, { cookies: { refreshToken: oldToken } }),
+    ])
+    assert.equal(first.statusCode, 200)
+    assert.equal(second.statusCode, 200)
+    assert.equal([first, second].filter((result) => result.cookies.some(({ name }) => name === 'refreshToken')).length, 1)
+    assert.equal([first, second].filter((result) => result.cookies.some(({ name }) => name === 'accessToken')).length, 2)
+    assert.ok(readCount >= 3)
+    assert.equal(revokeCount, 0)
+    assert.equal(session.tokenHash, sha256(first.cookies.find(({ name }) => name === 'refreshToken')?.value || second.cookies.find(({ name }) => name === 'refreshToken').value))
   })
 })
 
